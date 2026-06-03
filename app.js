@@ -362,6 +362,7 @@ async function makeOffer(actorNr) {
   if (peer.connection.signalingState !== "stable") return;
   const offer = await peer.connection.createOffer();
   await peer.connection.setLocalDescription(offer);
+  await waitForIceGathering(peer.connection);
   addSystem(`Отправлен запрос голоса для ${memberName(actorNr)}.`);
   sendSignal(actorNr, { type: "offer", sdp: peer.connection.localDescription.toJSON() });
 }
@@ -377,6 +378,7 @@ async function handleSignal(actorNr, data) {
     await flushPendingCandidates(peer);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
+    await waitForIceGathering(connection);
     sendSignal(actorNr, { type: "answer", sdp: connection.localDescription.toJSON() });
   }
   if (data.type === "answer") {
@@ -398,6 +400,26 @@ async function flushPendingCandidates(peer) {
   while (peer.pendingCandidates.length) {
     await peer.connection.addIceCandidate(peer.pendingCandidates.shift());
   }
+}
+
+function waitForIceGathering(connection) {
+  if (connection.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(() => {
+      connection.removeEventListener("icegatheringstatechange", checkState);
+      resolve();
+    }, 5000);
+    function checkState() {
+      if (connection.iceGatheringState === "complete") {
+        window.clearTimeout(timeout);
+        connection.removeEventListener("icegatheringstatechange", checkState);
+        resolve();
+      }
+    }
+    connection.addEventListener("icegatheringstatechange", checkState);
+  });
 }
 
 function sendSignal(to, payload) {
