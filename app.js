@@ -325,7 +325,7 @@ function createPeer(actorNr) {
 
   connection.onicecandidate = (event) => {
     if (event.candidate) {
-      sendSignal(actorNr, { type: "candidate", candidate: event.candidate });
+      sendSignal(actorNr, { type: "candidate", candidate: event.candidate.toJSON() });
     }
   };
   connection.ontrack = (event) => {
@@ -343,6 +343,15 @@ function createPeer(actorNr) {
       closePeer(actorNr);
     }
   };
+  connection.oniceconnectionstatechange = () => {
+    addSystem(`ICE ${memberName(actorNr)}: ${connection.iceConnectionState}.`);
+    renderMembers();
+  };
+  connection.onicegatheringstatechange = () => {
+    if (connection.iceGatheringState === "complete") {
+      addSystem(`ICE-кандидаты для ${memberName(actorNr)} собраны.`);
+    }
+  };
 
   return { connection, audio, pendingCandidates: [] };
 }
@@ -354,7 +363,7 @@ async function makeOffer(actorNr) {
   const offer = await peer.connection.createOffer();
   await peer.connection.setLocalDescription(offer);
   addSystem(`Отправлен запрос голоса для ${memberName(actorNr)}.`);
-  sendSignal(actorNr, { type: "offer", sdp: offer });
+  sendSignal(actorNr, { type: "offer", sdp: peer.connection.localDescription.toJSON() });
 }
 
 async function handleSignal(actorNr, data) {
@@ -368,7 +377,7 @@ async function handleSignal(actorNr, data) {
     await flushPendingCandidates(peer);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
-    sendSignal(actorNr, { type: "answer", sdp: answer });
+    sendSignal(actorNr, { type: "answer", sdp: connection.localDescription.toJSON() });
   }
   if (data.type === "answer") {
     addSystem(`Получен ответ голоса от ${memberName(actorNr)}.`);
@@ -514,10 +523,12 @@ function voiceLabel(actorNr) {
   }
   const peer = state.peers.get(actorNr);
   const connection = peer?.connection.connectionState;
+  const ice = peer?.connection.iceConnectionState;
+  const status = connection && connection !== "new" ? connection : ice || connection;
   if (state.speakingMembers.has(actorNr)) {
-    return `говорит${connection ? `, связь: ${connection}` : ""}`;
+    return `говорит${status ? `, связь: ${status}` : ""}`;
   }
-  return `в голосе${connection ? `, связь: ${connection}` : ""}`;
+  return `в голосе${status ? `, связь: ${status}` : ""}`;
 }
 
 function startSpeakingDetector() {
