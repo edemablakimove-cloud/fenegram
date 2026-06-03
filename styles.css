@@ -1,0 +1,291 @@
+:root {
+  color-scheme: dark;
+  --bg: #15171c;
+  --panel: #20242c;
+  --panel-2: #262b35;
+  --line: #363d4a;
+  --text: #edf1f7;
+  --muted: #aab3c2;
+  --accent: #2fbf8f;
+  --danger: #ef6b73;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 "Segoe UI", Arial, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #07130f;
+  font-weight: 700;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #12151a;
+  color: var(--text);
+  padding: 0 10px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  border-right: 1px solid var(--line);
+  background: #191c22;
+  padding: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #07130f;
+  font-weight: 800;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 18px;
+}
+
+h2 {
+  font-size: 20px;
+}
+
+.brand p,
+.topbar p {
+  color: var(--muted);
+}
+
+.brand .photon-credit {
+  font-size: 12px;
+}
+
+.panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+}
+
+.section-title {
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 74px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 20px;
+}
+
+.badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--muted);
+}
+
+.badge.online {
+  border-color: rgba(47, 191, 143, 0.5);
+  color: var(--accent);
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  min-height: 0;
+}
+
+.chat {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.messages {
+  overflow: auto;
+  padding: 18px 20px;
+}
+
+.message {
+  margin-bottom: 12px;
+}
+
+.message .author {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.message.system .author {
+  color: var(--muted);
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 14px;
+}
+
+.members {
+  border-left: 1px solid var(--line);
+  background: #181b21;
+  padding: 16px;
+}
+
+.member {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.member-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.member small {
+  color: var(--muted);
+}
+
+.speaking-dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.speaking-dot.active {
+  border-color: rgba(47, 191, 143, 0.5);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(47, 191, 143, 0.18);
+}
+
+@media (max-width: 860px) {
+  .app-shell,
+  .content {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar,
+  .members {
+    border: 0;
+  }
+
+  .sidebar {
+    padding: 12px;
+  }
+
+  .main {
+    min-height: 70vh;
+  }
+
+  .topbar {
+    min-height: 64px;
+    padding: 0 14px;
+  }
+
+  .content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chat {
+    min-height: 60vh;
+  }
+
+  .members {
+    order: -1;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .composer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  button,
+  input,
+  select {
+    min-height: 44px;
+  }
+}

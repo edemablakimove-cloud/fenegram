@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fenegram</title>
+    <meta name="theme-color" content="#15171c" />
+    <meta name="description" content="Fenegram - один общий текстовый и голосовой канал." />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">FG</div>
+          <div>
+            <h1>Fenegram</h1>
+            <p>один общий канал</p>
+            <p class="photon-credit">(создано при помощи Photon)</p>
+          </div>
+        </div>
+
+        <section class="panel">
+          <label>
+            Photon App ID
+            <input id="appIdInput" autocomplete="off" placeholder="вставь App ID из Photon Dashboard" />
+          </label>
+          <label>
+            Имя
+            <input id="nameInput" autocomplete="nickname" placeholder="например, Dima" />
+          </label>
+          <label>
+            Регион
+            <select id="regionInput">
+              <option value="EU">EU</option>
+              <option value="US">US</option>
+              <option value="ASIA">ASIA</option>
+            </select>
+          </label>
+          <button id="connectBtn" class="primary">Подключиться</button>
+          <button id="disconnectBtn">Отключиться</button>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">Голос</div>
+          <button id="voiceBtn">Войти в голос</button>
+          <button id="enableSoundBtn">Включить звук</button>
+          <label>
+            Микрофон
+            <select id="micSelect"></select>
+          </label>
+          <label>
+            Наушники / динамики
+            <select id="speakerSelect"></select>
+          </label>
+          <label>
+            Общая громкость
+            <input id="masterVolume" type="range" min="0" max="200" value="100" />
+          </label>
+          <label>
+            Мой микрофон
+            <input id="micVolume" type="range" min="0" max="200" value="100" />
+          </label>
+        </section>
+      </aside>
+
+      <section class="main">
+        <header class="topbar">
+          <div>
+            <h2>Главный канал</h2>
+            <p id="statusText">не подключено</p>
+          </div>
+          <div id="connectionBadge" class="badge">offline</div>
+        </header>
+
+        <section class="content">
+          <div class="chat">
+            <div id="messages" class="messages"></div>
+            <form id="messageForm" class="composer">
+              <input id="messageInput" placeholder="Написать в главный канал" autocomplete="off" />
+              <button class="primary" type="submit">Отправить</button>
+            </form>
+          </div>
+
+          <aside class="members">
+            <div class="section-title">Участники</div>
+            <div id="membersList"></div>
+          </aside>
+        </section>
+      </section>
+    </main>
+
+    <script src="lib/photon-realtime-browser.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
