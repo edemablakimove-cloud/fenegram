@@ -17,6 +17,7 @@ const state = {
   volumes: new Map(),
   livekitRoom: null,
   voiceEnabled: false,
+  voiceConnecting: false,
   voiceParticipants: new Map(),
   speakingNames: new Set(),
   audioElements: new Map(),
@@ -489,15 +490,21 @@ function renderDirectChat() {
 }
 
 async function toggleVoice() {
+  if (state.voiceConnecting) return;
   if (state.voiceEnabled) {
     stopVoice();
     return;
   }
+  state.voiceConnecting = true;
+  updateVoiceControls();
   try {
     await startVoice();
   } catch (error) {
     stopVoice();
-    addSystem(`Не удалось включить голос LiveKit: ${error.message}`);
+    addSystem(`Не удалось включить голос LiveKit: ${friendlyLiveKitError(error)}`);
+  } finally {
+    state.voiceConnecting = false;
+    updateVoiceControls();
   }
 }
 
@@ -533,6 +540,7 @@ async function startVoice() {
   await publishMicrophone(room);
 
   state.voiceEnabled = true;
+  state.voiceConnecting = false;
   state.micMuted = false;
   state.deafened = false;
   el.voice.textContent = "Выйти из голоса";
@@ -615,47 +623,51 @@ function bindLiveKitEvents(room) {
 }
 
 async function publishMicrophone(room) {
-  const constraints = {
-    audio: {
-      deviceId: el.mic.value ? { exact: el.mic.value } : undefined,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-    video: false,
-  };
-  const rawStream = await navigator.mediaDevices.getUserMedia(constraints);
-  state.rawStream = rawStream;
-
-  state.audioContext = new AudioContext();
-  await state.audioContext.resume();
-  const source = state.audioContext.createMediaStreamSource(rawStream);
-  state.micGain = state.audioContext.createGain();
-  state.analyser = state.audioContext.createAnalyser();
-  const destination = state.audioContext.createMediaStreamDestination();
-  source.connect(state.analyser);
-  source.connect(state.micGain);
-  state.micGain.connect(destination);
-  updateMicGain();
-
-  state.localOutputTrack = destination.stream.getAudioTracks()[0];
-  state.localPublication = await room.localParticipant.publishTrack(state.localOutputTrack, {
-    source: window.LivekitClient.Track.Source.Microphone,
-    name: "microphone",
+  const result = await room.localParticipant.setMicrophoneEnabled(true, {
+    deviceId: el.mic.value || undefined,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
   });
+  state.localPublication = result?.track ? result : getLocalMicrophonePublication(room);
+  state.localOutputTrack = state.localPublication?.track?.mediaStreamTrack || null;
+  state.localOutputTrack?.addEventListener(
+    "ended",
+    () => addSystem("Микрофонный трек остановился. Попробуй выбрать другой микрофон или перезайти в голос."),
+    { once: true }
+  );
+  if (!state.localPublication) {
+    throw new Error("microphone publication was not created");
+  }
+}
+
+function getLocalMicrophonePublication(room) {
+  const source = window.LivekitClient.Track.Source.Microphone;
+  if (typeof room.localParticipant.getTrackPublication === "function") {
+    const publication = room.localParticipant.getTrackPublication(source);
+    if (publication) return publication;
+  }
+  const publications = room.localParticipant.audioTrackPublications;
+  if (publications?.values) {
+    for (const publication of publications.values()) {
+      if (publication.source === source) return publication;
+    }
+  }
+  return null;
 }
 
 function stopVoice() {
   const room = state.livekitRoom;
-  if (room && state.localOutputTrack) {
-    room.localParticipant.unpublishTrack(state.localOutputTrack, true).catch(() => {});
+  if (room) {
+    room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+    room.disconnect();
   }
-  if (room) room.disconnect();
   cleanupVoice();
 }
 
 function cleanupVoice() {
   state.voiceEnabled = false;
+  state.voiceConnecting = false;
   state.micMuted = false;
   state.deafened = false;
   state.cameraEnabled = false;
@@ -682,20 +694,23 @@ function cleanupVoice() {
 
 async function restartVoiceIfNeeded() {
   if (!state.voiceEnabled) return;
+  if (state.voiceConnecting) return;
+  state.voiceConnecting = true;
+  updateVoiceControls();
   stopVoice();
   try {
     await startVoice();
   } catch (error) {
     stopVoice();
-    addSystem(`Не удалось сменить микрофон: ${error.message}`);
+    addSystem(`Не удалось сменить микрофон: ${friendlyLiveKitError(error)}`);
+  } finally {
+    state.voiceConnecting = false;
+    updateVoiceControls();
   }
 }
 
 function updateMicGain() {
   persistAudioSettings();
-  if (state.micGain) {
-    state.micGain.gain.value = Number(el.micVolume.value) / 100;
-  }
 }
 
 function attachAudioTrack(track, publication, participant) {
@@ -771,15 +786,19 @@ async function applyMicrophoneMute() {
 }
 
 function updateVoiceControls() {
-  el.mute.disabled = !state.voiceEnabled || state.deafened;
-  el.deafen.disabled = !state.voiceEnabled;
-  el.camera.disabled = !state.voiceEnabled;
-  el.screenShare.disabled = !state.voiceEnabled;
+  el.voice.disabled = state.voiceConnecting;
+  el.mute.disabled = state.voiceConnecting || !state.voiceEnabled || state.deafened;
+  el.deafen.disabled = state.voiceConnecting || !state.voiceEnabled;
+  el.camera.disabled = state.voiceConnecting || !state.voiceEnabled;
+  el.screenShare.disabled = state.voiceConnecting || !state.voiceEnabled;
+  el.voice.textContent = state.voiceConnecting ? "Подключение..." : state.voiceEnabled ? "Выйти из голоса" : "Войти в голос";
   el.mute.textContent = state.micMuted ? "Включить микрофон" : "Выключить микрофон";
   el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
   el.camera.textContent = state.cameraEnabled ? "Выключить камеру" : "Включить камеру";
   el.screenShare.textContent = state.screenShareEnabled ? "Остановить демонстрацию" : "Показать экран";
-  if (!state.voiceEnabled) {
+  if (state.voiceConnecting) {
+    el.voiceStatus.textContent = "Подключение к голосовому каналу...";
+  } else if (!state.voiceEnabled) {
     el.voiceStatus.textContent = "Не в голосовом канале";
   } else if (state.deafened) {
     el.voiceStatus.textContent = "Звук и микрофон выключены";
@@ -788,6 +807,23 @@ function updateVoiceControls() {
   } else {
     el.voiceStatus.textContent = "В голосовом канале";
   }
+}
+
+function friendlyLiveKitError(error) {
+  const message = error?.message || String(error || "");
+  if (message.includes("publication of local track timed out")) {
+    return "LiveKit подключился, но сеть не дала отправить микрофон на сервер. Попробуй другой браузер, мобильный интернет или VPN.";
+  }
+  if (message.includes("Abort handler called")) {
+    return "подключение было прервано. Подожди пару секунд и попробуй снова.";
+  }
+  if (message.includes("could not establish signal connection")) {
+    return "не удалось связаться с LiveKit. Проверь интернет, VPN или блокировки провайдера.";
+  }
+  if (error?.name === "NotAllowedError") {
+    return "браузер не дал доступ к микрофону.";
+  }
+  return message;
 }
 
 async function toggleCamera() {
@@ -1211,7 +1247,6 @@ function myActorNr() {
 }
 
 function setConnectedUi(connected) {
-  el.voice.disabled = false;
   el.message.disabled = !connected;
   el.badge.textContent = connected ? "online" : "offline";
   el.badge.classList.toggle("online", connected);
