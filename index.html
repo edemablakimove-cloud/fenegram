@@ -21,72 +21,108 @@
           </div>
         </div>
 
-        <section class="panel">
-          <label>
-            Photon App ID
-            <input id="appIdInput" autocomplete="off" placeholder="вставь App ID из Photon Dashboard" />
-          </label>
-          <label>
-            Имя
-            <input id="nameInput" autocomplete="nickname" placeholder="например, Dima" />
-          </label>
-          <label>
-            Регион
-            <select id="regionInput">
-              <option value="EU">EU</option>
-              <option value="US">US</option>
-              <option value="ASIA">ASIA</option>
-            </select>
-          </label>
-          <button id="connectBtn" class="primary">Подключиться</button>
-          <button id="disconnectBtn">Отключиться</button>
-        </section>
+        <nav class="sidebar-nav" aria-label="Навигация">
+          <button id="channelTabBtn" class="nav-button active">Главный канал</button>
+          <button id="settingsTabBtn" class="nav-button">Настройки</button>
+        </nav>
 
-        <section class="panel">
+        <section class="panel voice-panel">
           <div class="section-title">Голос</div>
-          <button id="voiceBtn">Войти в голос</button>
-          <button id="enableSoundBtn">Включить звук</button>
-          <label>
-            Микрофон
-            <select id="micSelect"></select>
-          </label>
-          <label>
-            Наушники / динамики
-            <select id="speakerSelect"></select>
-          </label>
-          <label>
-            Общая громкость
-            <input id="masterVolume" type="range" min="0" max="200" value="100" />
-          </label>
-          <label>
-            Мой микрофон
-            <input id="micVolume" type="range" min="0" max="200" value="100" />
-          </label>
+          <button id="voiceBtn" class="primary">Войти в голос</button>
+          <div class="voice-actions">
+            <button id="muteBtn" disabled>Выключить микрофон</button>
+            <button id="deafenBtn" disabled>Выключить звук и микрофон</button>
+          </div>
+          <p id="voiceStatus" class="device-test-status">Не в голосовом канале</p>
         </section>
       </aside>
 
       <section class="main">
-        <header class="topbar">
-          <div>
-            <h2>Главный канал</h2>
-            <p id="statusText">не подключено</p>
-          </div>
-          <div id="connectionBadge" class="badge">offline</div>
-        </header>
+        <section id="channelView" class="view">
+          <header class="topbar">
+            <div>
+              <h2>Главный канал</h2>
+              <p id="statusText">подключение...</p>
+            </div>
+            <div id="connectionBadge" class="badge">offline</div>
+          </header>
 
-        <section class="content">
-          <div class="chat">
-            <div id="messages" class="messages"></div>
-            <form id="messageForm" class="composer">
-              <input id="messageInput" placeholder="Написать в главный канал" autocomplete="off" />
-              <button class="primary" type="submit">Отправить</button>
-            </form>
-          </div>
+          <section class="content">
+            <div class="chat">
+              <div id="messages" class="messages"></div>
+              <form id="messageForm" class="composer">
+                <input id="messageInput" placeholder="Написать в главный канал" autocomplete="off" />
+                <button class="primary" type="submit">Отправить</button>
+              </form>
+            </div>
 
-          <aside class="members">
-            <div class="section-title">Участники</div>
-            <div id="membersList"></div>
-          </aside>
+            <aside class="members">
+              <div class="section-title">Участники</div>
+              <div id="membersList"></div>
+            </aside>
+          </section>
+        </section>
+
+        <section id="settingsView" class="view settings-view" hidden>
+          <header class="topbar">
+            <div>
+              <h2>Настройки</h2>
+              <p>Личные настройки Fenegram</p>
+            </div>
+          </header>
+
+          <div class="settings-content">
+            <section class="settings-section">
+              <div class="section-title">Аккаунт и подключение</div>
+              <label>
+                Ник
+                <input id="nameInput" autocomplete="nickname" placeholder="например, Dima" />
+              </label>
+              <p id="nameChangeHint" class="device-test-status"></p>
+              <label>
+                Сервер текста
+                <select id="regionInput">
+                  <option value="EU">Европа</option>
+                  <option value="US">США</option>
+                  <option value="ASIA">Азия</option>
+                </select>
+              </label>
+              <label>
+                Photon App ID
+                <input id="appIdInput" autocomplete="off" placeholder="вставь App ID из Photon Dashboard" disabled />
+              </label>
+              <label class="check-label">
+                <input id="unlockAppIdInput" type="checkbox" />
+                Разрешить изменение Photon App ID
+              </label>
+              <button id="saveSettingsBtn" class="primary">Сохранить настройки</button>
+            </section>
+
+            <section class="settings-section">
+              <div class="section-title">Устройства и громкость</div>
+              <label>
+                Микрофон
+                <select id="micSelect"></select>
+              </label>
+              <label>
+                Наушники / динамики
+                <select id="speakerSelect"></select>
+              </label>
+              <div class="device-test-actions">
+                <button id="testMicBtn">Проверить микрофон</button>
+                <button id="testSpeakerBtn">Проверить наушники</button>
+              </div>
+              <p id="deviceTestStatus" class="device-test-status">Проверка устройств не запущена</p>
+              <label>
+                Общая громкость
+                <input id="masterVolume" type="range" min="0" max="200" value="100" />
+              </label>
+              <label>
+                Мой микрофон
+                <input id="micVolume" type="range" min="0" max="200" value="100" />
+              </label>
+            </section>
+          </div>
         </section>
       </section>
     </main>

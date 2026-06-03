@@ -3,6 +3,7 @@ const EVENT_TEXT = 1;
 const APP_VERSION = "0.2.0";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
+const NAME_CHANGE_INTERVAL = 24 * 60 * 60 * 1000;
 
 const state = {
   client: null,
@@ -19,16 +20,28 @@ const state = {
   micGain: null,
   analyser: null,
   localOutputTrack: null,
+  localPublication: null,
+  deviceTestRunning: false,
+  connecting: false,
+  micMuted: false,
+  deafened: false,
 };
 
 const el = {
   appId: document.querySelector("#appIdInput"),
+  unlockAppId: document.querySelector("#unlockAppIdInput"),
   name: document.querySelector("#nameInput"),
   region: document.querySelector("#regionInput"),
-  connect: document.querySelector("#connectBtn"),
-  disconnect: document.querySelector("#disconnectBtn"),
+  saveSettings: document.querySelector("#saveSettingsBtn"),
+  nameChangeHint: document.querySelector("#nameChangeHint"),
+  channelTab: document.querySelector("#channelTabBtn"),
+  settingsTab: document.querySelector("#settingsTabBtn"),
+  channelView: document.querySelector("#channelView"),
+  settingsView: document.querySelector("#settingsView"),
   voice: document.querySelector("#voiceBtn"),
-  enableSound: document.querySelector("#enableSoundBtn"),
+  mute: document.querySelector("#muteBtn"),
+  deafen: document.querySelector("#deafenBtn"),
+  voiceStatus: document.querySelector("#voiceStatus"),
   status: document.querySelector("#statusText"),
   badge: document.querySelector("#connectionBadge"),
   messages: document.querySelector("#messages"),
@@ -37,6 +50,9 @@ const el = {
   members: document.querySelector("#membersList"),
   mic: document.querySelector("#micSelect"),
   speaker: document.querySelector("#speakerSelect"),
+  testMic: document.querySelector("#testMicBtn"),
+  testSpeaker: document.querySelector("#testSpeakerBtn"),
+  deviceTestStatus: document.querySelector("#deviceTestStatus"),
   masterVolume: document.querySelector("#masterVolume"),
   micVolume: document.querySelector("#micVolume"),
 };
@@ -44,29 +60,54 @@ const el = {
 loadSettings();
 refreshDevices();
 setConnectedUi(false);
+updateNameChangeUi();
+window.setTimeout(connect, 100);
 
-el.connect.addEventListener("click", connect);
-el.disconnect.addEventListener("click", disconnect);
+el.channelTab.addEventListener("click", () => showView("channel"));
+el.settingsTab.addEventListener("click", () => showView("settings"));
+el.unlockAppId.addEventListener("change", () => {
+  el.appId.disabled = !el.unlockAppId.checked;
+});
+el.saveSettings.addEventListener("click", saveUserSettings);
 el.voice.addEventListener("click", toggleVoice);
-el.enableSound.addEventListener("click", enableRemoteSound);
+el.mute.addEventListener("click", toggleMute);
+el.deafen.addEventListener("click", toggleDeafen);
 el.form.addEventListener("submit", sendMessage);
-el.mic.addEventListener("change", restartVoiceIfNeeded);
-el.speaker.addEventListener("change", changeAudioOutput);
+el.mic.addEventListener("change", () => {
+  localStorage.setItem("pm.micDevice", el.mic.value);
+  restartVoiceIfNeeded();
+});
+el.speaker.addEventListener("change", () => {
+  localStorage.setItem("pm.speakerDevice", el.speaker.value);
+  changeAudioOutput();
+});
+el.testMic.addEventListener("click", testMicrophone);
+el.testSpeaker.addEventListener("click", testSpeaker);
 el.micVolume.addEventListener("input", updateMicGain);
 el.masterVolume.addEventListener("input", updateAllVolumes);
 
 function loadSettings() {
   el.appId.value = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
-  el.name.value = localStorage.getItem("pm.name") || `User${Math.floor(Math.random() * 1000)}`;
+  let nickname = localStorage.getItem("pm.name");
+  if (!nickname) {
+    nickname = `User${Math.floor(Math.random() * 1000)}`;
+    localStorage.setItem("pm.name", nickname);
+  }
+  el.name.value = nickname;
   el.region.value = localStorage.getItem("pm.region") || "EU";
   el.masterVolume.value = localStorage.getItem("pm.masterVolume") || "100";
   el.micVolume.value = localStorage.getItem("pm.micVolume") || "100";
 }
 
-function saveSettings() {
+function persistSettings() {
   localStorage.setItem("pm.appId", el.appId.value.trim());
   localStorage.setItem("pm.name", el.name.value.trim());
   localStorage.setItem("pm.region", el.region.value);
+  localStorage.setItem("pm.masterVolume", el.masterVolume.value);
+  localStorage.setItem("pm.micVolume", el.micVolume.value);
+}
+
+function persistAudioSettings() {
   localStorage.setItem("pm.masterVolume", el.masterVolume.value);
   localStorage.setItem("pm.micVolume", el.micVolume.value);
 }
@@ -79,7 +120,8 @@ async function refreshDevices() {
 }
 
 function fillDeviceSelect(select, devices, fallback) {
-  const previous = select.value;
+  const storageKey = select === el.mic ? "pm.micDevice" : "pm.speakerDevice";
+  const previous = select.value || localStorage.getItem(storageKey) || "";
   select.innerHTML = `<option value="">${fallback}</option>`;
   for (const device of devices) {
     const option = document.createElement("option");
@@ -92,7 +134,76 @@ function fillDeviceSelect(select, devices, fallback) {
   }
 }
 
+function showView(view) {
+  const settings = view === "settings";
+  el.channelView.hidden = settings;
+  el.settingsView.hidden = !settings;
+  el.channelTab.classList.toggle("active", !settings);
+  el.settingsTab.classList.toggle("active", settings);
+}
+
+function saveUserSettings() {
+  const nickname = el.name.value.trim();
+  const appId = el.appId.value.trim();
+  const oldName = localStorage.getItem("pm.name") || "";
+  const oldAppId = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
+  const oldRegion = localStorage.getItem("pm.region") || "EU";
+
+  if (!nickname) {
+    setDeviceTestStatus("Ник не может быть пустым.");
+    return;
+  }
+  if (!appId) {
+    setDeviceTestStatus("Photon App ID не может быть пустым.");
+    return;
+  }
+  if (nickname !== oldName && !canChangeName()) {
+    el.name.value = oldName;
+    updateNameChangeUi();
+    return;
+  }
+
+  if (nickname !== oldName) {
+    localStorage.setItem("pm.nameChangedAt", String(Date.now()));
+  }
+  persistSettings();
+  el.unlockAppId.checked = false;
+  el.appId.disabled = true;
+  updateNameChangeUi();
+  setDeviceTestStatus("Настройки сохранены.");
+
+  if (nickname !== oldName || appId !== oldAppId || el.region.value !== oldRegion) {
+    reconnectTextChat();
+  }
+}
+
+function canChangeName() {
+  const changedAt = Number(localStorage.getItem("pm.nameChangedAt") || 0);
+  return !changedAt || Date.now() - changedAt >= NAME_CHANGE_INTERVAL;
+}
+
+function updateNameChangeUi() {
+  const changedAt = Number(localStorage.getItem("pm.nameChangedAt") || 0);
+  const remaining = NAME_CHANGE_INTERVAL - (Date.now() - changedAt);
+  if (!changedAt || remaining <= 0) {
+    el.name.disabled = false;
+    el.nameChangeHint.textContent = "Ник можно изменить один раз в сутки.";
+    return;
+  }
+  const hours = Math.ceil(remaining / (60 * 60 * 1000));
+  el.name.disabled = true;
+  el.nameChangeHint.textContent = `Следующая смена ника будет доступна примерно через ${hours} ч.`;
+}
+
+function reconnectTextChat() {
+  stopVoice();
+  if (state.client) state.client.disconnect();
+  cleanupConnection();
+  window.setTimeout(connect, 250);
+}
+
 function connect() {
+  if (state.joined || state.connecting) return;
   const appId = el.appId.value.trim();
   const nickname = el.name.value.trim();
   if (!appId) {
@@ -103,7 +214,8 @@ function connect() {
     addSystem("Введи имя.");
     return;
   }
-  saveSettings();
+  persistSettings();
+  state.connecting = true;
 
   const Photon = window.Photon;
   const LBC = Photon.LoadBalancing.LoadBalancingClient;
@@ -118,18 +230,21 @@ function connect() {
       this.joinRoom(ROOM_NAME, { createIfNotExists: true }, { maxPlayers: 32, isVisible: true, isOpen: true });
     }
     if (clientState === LBC.State.Joined) {
+      state.connecting = false;
       state.joined = true;
       setConnectedUi(true);
       syncMembers();
       addSystem("Подключено к главному каналу.");
     }
     if (clientState === LBC.State.Disconnected) {
+      state.connecting = false;
       cleanupConnection();
       addSystem("Отключено.");
     }
   };
 
   client.onError = function (code, message) {
+    state.connecting = false;
     addSystem(`Ошибка Photon: ${code} ${message}`);
   };
 
@@ -166,6 +281,7 @@ function disconnect() {
 }
 
 function cleanupConnection() {
+  state.connecting = false;
   state.joined = false;
   state.members.clear();
   setConnectedUi(false);
@@ -230,13 +346,17 @@ async function startVoice() {
   });
   state.livekitRoom = room;
   bindLiveKitEvents(room);
+  room.startAudio().catch(() => {});
 
   addSystem("Подключение к голосовому серверу LiveKit...");
   await room.connect(credentials.serverUrl, credentials.participantToken);
   await publishMicrophone(room);
 
   state.voiceEnabled = true;
+  state.micMuted = false;
+  state.deafened = false;
   el.voice.textContent = "Выйти из голоса";
+  updateVoiceControls();
   syncVoiceParticipants();
   await refreshDevices();
   renderMembers();
@@ -276,7 +396,7 @@ function bindLiveKitEvents(room) {
 
   room.on(events.AudioPlaybackStatusChanged, () => {
     if (!room.canPlaybackAudio) {
-      addSystem("Браузер заблокировал звук. Нажми кнопку «Включить звук».");
+      addSystem("Браузер заблокировал звук. Нажми любую кнопку в Fenegram и войди в голос заново.");
     }
   });
 
@@ -315,7 +435,7 @@ async function publishMicrophone(room) {
   updateMicGain();
 
   state.localOutputTrack = destination.stream.getAudioTracks()[0];
-  await room.localParticipant.publishTrack(state.localOutputTrack, {
+  state.localPublication = await room.localParticipant.publishTrack(state.localOutputTrack, {
     source: window.LivekitClient.Track.Source.Microphone,
     name: "microphone",
   });
@@ -332,6 +452,8 @@ function stopVoice() {
 
 function cleanupVoice() {
   state.voiceEnabled = false;
+  state.micMuted = false;
+  state.deafened = false;
   el.voice.textContent = "Войти в голос";
   state.voiceParticipants.clear();
   state.speakingNames.clear();
@@ -342,10 +464,12 @@ function cleanupVoice() {
   if (state.audioContext) state.audioContext.close().catch(() => {});
   state.rawStream = null;
   state.localOutputTrack = null;
+  state.localPublication = null;
   state.audioContext = null;
   state.micGain = null;
   state.analyser = null;
   state.livekitRoom = null;
+  updateVoiceControls();
   renderMembers();
 }
 
@@ -361,7 +485,7 @@ async function restartVoiceIfNeeded() {
 }
 
 function updateMicGain() {
-  saveSettings();
+  persistAudioSettings();
   if (state.micGain) {
     state.micGain.gain.value = Number(el.micVolume.value) / 100;
   }
@@ -375,11 +499,12 @@ function attachAudioTrack(track, publication, participant) {
   audio.playsInline = true;
   audio.dataset.participantIdentity = participant.identity;
   audio.dataset.participantName = participantName(participant);
+  audio.muted = state.deafened;
   document.body.appendChild(audio);
   state.audioElements.set(key, audio);
   applyAudioOutput(audio);
   updateOneVolume(participantName(participant), audio);
-  audio.play().catch(() => addSystem("Нажми «Включить звук», чтобы слышать участников."));
+  audio.play().catch(() => {});
   renderMembers();
 }
 
@@ -396,18 +521,55 @@ function removeParticipantAudio(identity) {
   }
 }
 
-async function enableRemoteSound() {
-  const room = state.livekitRoom;
-  if (!room) {
-    addSystem("Сначала войди в голос.");
-    return;
+async function toggleMute() {
+  if (!state.voiceEnabled || !state.localPublication) return;
+  if (state.deafened) return;
+  state.micMuted = !state.micMuted;
+  await applyMicrophoneMute();
+  updateVoiceControls();
+  renderMembers();
+}
+
+async function toggleDeafen() {
+  if (!state.voiceEnabled) return;
+  if (!state.deafened) {
+    state.deafened = true;
+    state.micMuted = true;
+  } else {
+    state.deafened = false;
+    state.micMuted = false;
   }
-  try {
-    await room.startAudio();
-    for (const audio of state.audioElements.values()) await audio.play();
-    addSystem("Воспроизведение голоса включено.");
-  } catch (error) {
-    addSystem(`Не удалось включить звук: ${error.message}`);
+  await applyMicrophoneMute();
+  for (const audio of state.audioElements.values()) {
+    audio.muted = state.deafened;
+    if (!state.deafened) audio.play().catch(() => {});
+  }
+  updateVoiceControls();
+  renderMembers();
+}
+
+async function applyMicrophoneMute() {
+  if (!state.localPublication) return;
+  if (state.micMuted) {
+    await state.localPublication.mute();
+  } else {
+    await state.localPublication.unmute();
+  }
+}
+
+function updateVoiceControls() {
+  el.mute.disabled = !state.voiceEnabled || state.deafened;
+  el.deafen.disabled = !state.voiceEnabled;
+  el.mute.textContent = state.micMuted ? "Включить микрофон" : "Выключить микрофон";
+  el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
+  if (!state.voiceEnabled) {
+    el.voiceStatus.textContent = "Не в голосовом канале";
+  } else if (state.deafened) {
+    el.voiceStatus.textContent = "Звук и микрофон выключены";
+  } else if (state.micMuted) {
+    el.voiceStatus.textContent = "Микрофон выключен";
+  } else {
+    el.voiceStatus.textContent = "В голосовом канале";
   }
 }
 
@@ -423,8 +585,125 @@ async function changeAudioOutput() {
   for (const audio of state.audioElements.values()) applyAudioOutput(audio);
 }
 
+async function testSpeaker() {
+  if (state.deviceTestRunning) return;
+  setDeviceTestRunning(true, "Проверка наушников...");
+  let context;
+  let audio;
+  try {
+    context = new AudioContext();
+    context.resume().catch(() => {});
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const destination = context.createMediaStreamDestination();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 660;
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.65);
+    oscillator.connect(gain);
+    gain.connect(destination);
+
+    audio = new Audio();
+    audio.srcObject = destination.stream;
+    audio.volume = Math.max(0, Math.min(1, Number(el.masterVolume.value) / 100));
+    await applyAudioOutputAndWait(audio);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.7);
+    audio.play().catch(() => {});
+    await wait(850);
+    setDeviceTestStatus("Если ты услышал сигнал, наушники работают.");
+  } catch (error) {
+    setDeviceTestStatus(`Не удалось проверить наушники: ${error.message}`);
+  } finally {
+    if (audio) {
+      audio.pause();
+      audio.srcObject = null;
+    }
+    if (context) await context.close().catch(() => {});
+    setDeviceTestRunning(false);
+  }
+}
+
+async function testMicrophone() {
+  if (state.deviceTestRunning) return;
+  if (!window.MediaRecorder) {
+    setDeviceTestStatus("Этот браузер не поддерживает запись для проверки микрофона.");
+    return;
+  }
+  setDeviceTestRunning(true, "Говори 3 секунды...");
+  let stream;
+  let playback;
+  let objectUrl;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: el.mic.value ? { exact: el.mic.value } : undefined,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+      video: false,
+    });
+    await refreshDevices();
+    const chunks = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size) chunks.push(event.data);
+    });
+    const stopped = new Promise((resolve) => recorder.addEventListener("stop", resolve, { once: true }));
+    recorder.start();
+    await wait(3000);
+    recorder.stop();
+    await stopped;
+    stream.getTracks().forEach((track) => track.stop());
+    stream = null;
+
+    setDeviceTestStatus("Сейчас должна проиграться твоя запись...");
+    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    objectUrl = URL.createObjectURL(blob);
+    playback = new Audio(objectUrl);
+    playback.volume = Math.max(0, Math.min(1, Number(el.masterVolume.value) / 100));
+    await applyAudioOutputAndWait(playback);
+    await playback.play();
+    await new Promise((resolve) => {
+      playback.addEventListener("ended", resolve, { once: true });
+      window.setTimeout(resolve, 5000);
+    });
+    setDeviceTestStatus("Если ты услышал себя, микрофон работает.");
+  } catch (error) {
+    setDeviceTestStatus(`Не удалось проверить микрофон: ${error.message}`);
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    if (playback) playback.pause();
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    setDeviceTestRunning(false);
+  }
+}
+
+function setDeviceTestRunning(running, status) {
+  state.deviceTestRunning = running;
+  el.testMic.disabled = running;
+  el.testSpeaker.disabled = running;
+  if (status) setDeviceTestStatus(status);
+}
+
+function setDeviceTestStatus(text) {
+  el.deviceTestStatus.textContent = text;
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function applyAudioOutputAndWait(audio) {
+  if (typeof audio.setSinkId === "function" && el.speaker.value) {
+    await audio.setSinkId(el.speaker.value);
+  }
+}
+
 function updateAllVolumes() {
-  saveSettings();
+  persistAudioSettings();
   for (const audio of state.audioElements.values()) {
     updateOneVolume(audio.dataset.participantName, audio);
   }
@@ -504,6 +783,8 @@ function voiceLabel(name, isLocal) {
   const speaking = state.speakingNames.has(name);
   if (isLocal) {
     if (!inVoice) return "не в голосе";
+    if (state.deafened) return "звук и микрофон выключены";
+    if (state.micMuted) return "микрофон выключен";
     return speaking ? "ты говоришь" : "ты в голосе";
   }
   if (!inVoice) return "не в голосе";
@@ -523,13 +804,11 @@ function myActorNr() {
 }
 
 function setConnectedUi(connected) {
-  el.connect.disabled = connected;
-  el.disconnect.disabled = !connected;
   el.voice.disabled = !connected;
-  el.enableSound.disabled = !connected;
   el.message.disabled = !connected;
   el.badge.textContent = connected ? "online" : "offline";
   el.badge.classList.toggle("online", connected);
+  updateVoiceControls();
 }
 
 function setStatus(text) {
