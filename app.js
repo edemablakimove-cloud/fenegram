@@ -1,26 +1,24 @@
 const ROOM_NAME = "main";
 const EVENT_TEXT = 1;
-const EVENT_SIGNAL = 2;
-const EVENT_VOICE = 3;
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
+const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
 
 const state = {
   client: null,
   joined: false,
+  members: new Map(),
+  volumes: new Map(),
+  livekitRoom: null,
   voiceEnabled: false,
+  voiceParticipants: new Map(),
+  speakingNames: new Set(),
+  audioElements: new Map(),
   rawStream: null,
-  localStream: null,
   audioContext: null,
   micGain: null,
   analyser: null,
-  vadTimer: null,
-  speaking: false,
-  peers: new Map(),
-  voiceMembers: new Set(),
-  speakingMembers: new Set(),
-  members: new Map(),
-  volumes: new Map(),
+  localOutputTrack: null,
 };
 
 const el = {
@@ -53,6 +51,7 @@ el.voice.addEventListener("click", toggleVoice);
 el.enableSound.addEventListener("click", enableRemoteSound);
 el.form.addEventListener("submit", sendMessage);
 el.mic.addEventListener("change", restartVoiceIfNeeded);
+el.speaker.addEventListener("change", changeAudioOutput);
 el.micVolume.addEventListener("input", updateMicGain);
 el.masterVolume.addEventListener("input", updateAllVolumes);
 
@@ -60,18 +59,20 @@ function loadSettings() {
   el.appId.value = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
   el.name.value = localStorage.getItem("pm.name") || `User${Math.floor(Math.random() * 1000)}`;
   el.region.value = localStorage.getItem("pm.region") || "EU";
+  el.masterVolume.value = localStorage.getItem("pm.masterVolume") || "100";
+  el.micVolume.value = localStorage.getItem("pm.micVolume") || "100";
 }
 
 function saveSettings() {
   localStorage.setItem("pm.appId", el.appId.value.trim());
   localStorage.setItem("pm.name", el.name.value.trim());
   localStorage.setItem("pm.region", el.region.value);
+  localStorage.setItem("pm.masterVolume", el.masterVolume.value);
+  localStorage.setItem("pm.micVolume", el.micVolume.value);
 }
 
 async function refreshDevices() {
-  if (!navigator.mediaDevices?.enumerateDevices) {
-    return;
-  }
+  if (!navigator.mediaDevices?.enumerateDevices) return;
   const devices = await navigator.mediaDevices.enumerateDevices();
   fillDeviceSelect(el.mic, devices.filter((device) => device.kind === "audioinput"), "Системный микрофон");
   fillDeviceSelect(el.speaker, devices.filter((device) => device.kind === "audiooutput"), "Системные наушники/динамики");
@@ -86,7 +87,9 @@ function fillDeviceSelect(select, devices, fallback) {
     option.textContent = device.label || `${fallback} ${select.length}`;
     select.appendChild(option);
   }
-  select.value = previous;
+  if ([...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  }
 }
 
 function connect() {
@@ -139,14 +142,9 @@ function connect() {
   client.onActorJoin = function (actor) {
     state.members.set(actor.actorNr, actor.name || `User ${actor.actorNr}`);
     renderMembers();
-    if (state.voiceEnabled && actor.actorNr !== myActorNr()) {
-      state.client.raiseEvent(EVENT_VOICE, { type: "ready", name: el.name.value.trim() }, { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All });
-      ensurePeer(actor.actorNr, myActorNr() > actor.actorNr);
-    }
   };
 
   client.onActorLeave = function (actor) {
-    closePeer(actor.actorNr);
     state.members.delete(actor.actorNr);
     renderMembers();
   };
@@ -154,14 +152,6 @@ function connect() {
   client.onEvent = function (code, data, actorNr) {
     if (code === EVENT_TEXT) {
       addMessage(data.name || memberName(actorNr), data.text || "");
-    }
-    if (code === EVENT_SIGNAL) {
-      handleSignal(actorNr, data).catch((error) => {
-        addSystem(`Ошибка голосового соединения с ${memberName(actorNr)}: ${error.message}`);
-      });
-    }
-    if (code === EVENT_VOICE) {
-      handleVoiceEvent(actorNr, data);
     }
   };
 
@@ -171,20 +161,13 @@ function connect() {
 
 function disconnect() {
   stopVoice();
-  if (state.client) {
-    state.client.disconnect();
-  }
+  if (state.client) state.client.disconnect();
   cleanupConnection();
 }
 
 function cleanupConnection() {
   state.joined = false;
   state.members.clear();
-  state.voiceMembers.clear();
-  state.speakingMembers.clear();
-  for (const actorNr of state.peers.keys()) {
-    closePeer(actorNr);
-  }
   setConnectedUi(false);
   renderMembers();
 }
@@ -200,7 +183,7 @@ function sendMessage(event) {
   state.client.raiseEvent(
     EVENT_TEXT,
     { name: el.name.value.trim(), text },
-    { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All }
+    { receivers: window.Photon.LoadBalancing.Constants.ReceiverGroup.All }
   );
   el.message.value = "";
 }
@@ -217,295 +200,239 @@ async function toggleVoice() {
   try {
     await startVoice();
   } catch (error) {
-    addSystem(`Не удалось включить голос: ${error.message}`);
+    stopVoice();
+    addSystem(`Не удалось включить голос LiveKit: ${error.message}`);
   }
 }
 
 async function startVoice() {
+  if (!window.LivekitClient) {
+    throw new Error("библиотека LiveKit не загрузилась");
+  }
+
+  const nickname = el.name.value.trim();
+  const identity = `user-${crypto.randomUUID().slice(0, 8)}`;
+  const tokenSource = window.LivekitClient.TokenSource.sandboxTokenServer(LIVEKIT_SANDBOX_ID);
+  const credentials = await tokenSource.fetch({
+    roomName: ROOM_NAME,
+    participantIdentity: identity,
+    participantName: nickname,
+  });
+
+  const room = new window.LivekitClient.Room({
+    adaptiveStream: true,
+    dynacast: true,
+    audioCaptureDefaults: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+  state.livekitRoom = room;
+  bindLiveKitEvents(room);
+
+  addSystem("Подключение к голосовому серверу LiveKit...");
+  await room.connect(credentials.serverUrl, credentials.participantToken);
+  await publishMicrophone(room);
+
+  state.voiceEnabled = true;
+  el.voice.textContent = "Выйти из голоса";
+  syncVoiceParticipants();
+  await refreshDevices();
+  renderMembers();
+  addSystem("Голос включен через LiveKit.");
+}
+
+function bindLiveKitEvents(room) {
+  const events = window.LivekitClient.RoomEvent;
+
+  room.on(events.ParticipantConnected, (participant) => {
+    state.voiceParticipants.set(participant.identity, participantName(participant));
+    addSystem(`${participantName(participant)} вошел в голос.`);
+    renderMembers();
+  });
+
+  room.on(events.ParticipantDisconnected, (participant) => {
+    state.voiceParticipants.delete(participant.identity);
+    removeParticipantAudio(participant.identity);
+    addSystem(`${participantName(participant)} вышел из голоса.`);
+    renderMembers();
+  });
+
+  room.on(events.TrackSubscribed, (track, publication, participant) => {
+    if (track.kind !== window.LivekitClient.Track.Kind.Audio) return;
+    attachAudioTrack(track, publication, participant);
+  });
+
+  room.on(events.TrackUnsubscribed, (track, publication) => {
+    removeAudioTrack(publication.trackSid || track.sid);
+    track.detach().forEach((audio) => audio.remove());
+  });
+
+  room.on(events.ActiveSpeakersChanged, (speakers) => {
+    state.speakingNames = new Set(speakers.map(participantName));
+    renderMembers();
+  });
+
+  room.on(events.AudioPlaybackStatusChanged, () => {
+    if (!room.canPlaybackAudio) {
+      addSystem("Браузер заблокировал звук. Нажми кнопку «Включить звук».");
+    }
+  });
+
+  room.on(events.MediaDevicesChanged, refreshDevices);
+  room.on(events.MediaDevicesError, (error) => addSystem(`Ошибка аудиоустройства: ${error.message}`));
+  room.on(events.Reconnecting, () => addSystem("LiveKit переподключает голос..."));
+  room.on(events.Reconnected, () => addSystem("Голос LiveKit переподключен."));
+  room.on(events.Disconnected, () => {
+    if (state.voiceEnabled) addSystem("Голос LiveKit отключен.");
+    cleanupVoice();
+  });
+}
+
+async function publishMicrophone(room) {
   const constraints = {
-    audio: el.mic.value ? { deviceId: { exact: el.mic.value } } : true,
+    audio: {
+      deviceId: el.mic.value ? { exact: el.mic.value } : undefined,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
     video: false,
   };
   const rawStream = await navigator.mediaDevices.getUserMedia(constraints);
   state.rawStream = rawStream;
-  await refreshDevices();
 
   state.audioContext = new AudioContext();
+  await state.audioContext.resume();
   const source = state.audioContext.createMediaStreamSource(rawStream);
   state.micGain = state.audioContext.createGain();
   state.analyser = state.audioContext.createAnalyser();
-  state.analyser.fftSize = 1024;
   const destination = state.audioContext.createMediaStreamDestination();
   source.connect(state.analyser);
   source.connect(state.micGain);
   state.micGain.connect(destination);
-  state.localStream = destination.stream;
   updateMicGain();
 
-  state.voiceEnabled = true;
-  el.voice.textContent = "Выйти из голоса";
-  state.voiceMembers.add(myActorNr());
-  addSystem(`Голос включен. Микрофон: ${rawStream.getAudioTracks()[0]?.label || "выбранное устройство"}.`);
-  state.client.raiseEvent(EVENT_VOICE, { type: "ready", name: el.name.value.trim() }, { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All });
-  startSpeakingDetector();
-  for (const actor of state.client.myRoomActorsArray()) {
-    if (actor.actorNr !== myActorNr() && state.voiceMembers.has(actor.actorNr)) {
-      ensurePeer(actor.actorNr, myActorNr() > actor.actorNr);
-    }
-  }
-  renderMembers();
+  state.localOutputTrack = destination.stream.getAudioTracks()[0];
+  await room.localParticipant.publishTrack(state.localOutputTrack, {
+    source: window.LivekitClient.Track.Source.Microphone,
+    name: "microphone",
+  });
 }
 
 function stopVoice() {
-  if (state.voiceEnabled && state.client?.isJoinedToRoom?.()) {
-    state.client.raiseEvent(EVENT_VOICE, { type: "left" }, { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All });
+  const room = state.livekitRoom;
+  if (room && state.localOutputTrack) {
+    room.localParticipant.unpublishTrack(state.localOutputTrack, true).catch(() => {});
   }
+  if (room) room.disconnect();
+  cleanupVoice();
+}
+
+function cleanupVoice() {
   state.voiceEnabled = false;
   el.voice.textContent = "Войти в голос";
-  stopSpeakingDetector();
-  for (const actorNr of state.peers.keys()) {
-    closePeer(actorNr);
-  }
-  if (state.localStream) {
-    state.localStream.getTracks().forEach((track) => track.stop());
-    state.localStream = null;
-  }
-  if (state.rawStream) {
-    state.rawStream.getTracks().forEach((track) => track.stop());
-    state.rawStream = null;
-  }
-  if (state.audioContext) {
-    state.audioContext.close();
-    state.audioContext = null;
-  }
+  state.voiceParticipants.clear();
+  state.speakingNames.clear();
+  for (const audio of state.audioElements.values()) audio.remove();
+  state.audioElements.clear();
+  if (state.rawStream) state.rawStream.getTracks().forEach((track) => track.stop());
+  if (state.localOutputTrack) state.localOutputTrack.stop();
+  if (state.audioContext) state.audioContext.close().catch(() => {});
+  state.rawStream = null;
+  state.localOutputTrack = null;
+  state.audioContext = null;
   state.micGain = null;
   state.analyser = null;
-  state.voiceMembers.delete(myActorNr());
-  state.speakingMembers.delete(myActorNr());
+  state.livekitRoom = null;
   renderMembers();
 }
 
 async function restartVoiceIfNeeded() {
   if (!state.voiceEnabled) return;
   stopVoice();
-  await startVoice();
+  try {
+    await startVoice();
+  } catch (error) {
+    stopVoice();
+    addSystem(`Не удалось сменить микрофон: ${error.message}`);
+  }
 }
 
 function updateMicGain() {
+  saveSettings();
   if (state.micGain) {
     state.micGain.gain.value = Number(el.micVolume.value) / 100;
   }
 }
 
-function ensurePeer(actorNr, politeInitiator) {
-  if (state.peers.has(actorNr) || !state.voiceEnabled) {
-    return state.peers.get(actorNr);
-  }
-  const peer = createPeer(actorNr);
-  state.peers.set(actorNr, peer);
-  for (const track of state.localStream.getTracks()) {
-    peer.connection.addTrack(track, state.localStream);
-  }
-  if (politeInitiator) {
-    makeOffer(actorNr);
-  }
-  return peer;
-}
-
-function createPeer(actorNr) {
-  const connection = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-  const audio = new Audio();
+function attachAudioTrack(track, publication, participant) {
+  const key = publication.trackSid || track.sid || `${participant.identity}-${Date.now()}`;
+  removeAudioTrack(key);
+  const audio = track.attach();
   audio.autoplay = true;
   audio.playsInline = true;
-  audio.muted = false;
-  audio.dataset.actor = String(actorNr);
+  audio.dataset.participantIdentity = participant.identity;
+  audio.dataset.participantName = participantName(participant);
   document.body.appendChild(audio);
-
-  connection.onicecandidate = (event) => {
-    if (event.candidate) {
-      const candidate = event.candidate.toJSON();
-      sendSignal(actorNr, {
-        kind: "candidate",
-        candidate: candidate.candidate || "",
-        sdpMid: candidate.sdpMid || "",
-        sdpMLineIndex: candidate.sdpMLineIndex ?? 0,
-        usernameFragment: candidate.usernameFragment || "",
-      });
-    }
-  };
-  connection.ontrack = (event) => {
-    addSystem(`Получен голосовой поток от ${memberName(actorNr)}.`);
-    audio.srcObject = event.streams[0];
-    applyAudioOutput(audio);
-    updateOneVolume(actorNr, audio);
-    audio.play().catch(() => addSystem("Браузер заблокировал воспроизведение. Нажми кнопку «Включить звук»."));
-    renderMembers();
-  };
-  connection.onconnectionstatechange = () => {
-    addSystem(`Голос ${memberName(actorNr)}: ${connection.connectionState}.`);
-    renderMembers();
-    if (["failed", "closed", "disconnected"].includes(connection.connectionState)) {
-      closePeer(actorNr);
-    }
-  };
-  connection.oniceconnectionstatechange = () => {
-    addSystem(`ICE ${memberName(actorNr)}: ${connection.iceConnectionState}.`);
-    renderMembers();
-  };
-  connection.onicegatheringstatechange = () => {
-    if (connection.iceGatheringState === "complete") {
-      addSystem(`ICE-кандидаты для ${memberName(actorNr)} собраны.`);
-    }
-  };
-
-  return { connection, audio, pendingCandidates: [] };
-}
-
-async function makeOffer(actorNr) {
-  const peer = state.peers.get(actorNr);
-  if (!peer) return;
-  if (peer.connection.signalingState !== "stable") return;
-  const offer = await peer.connection.createOffer();
-  await peer.connection.setLocalDescription(offer);
-  await waitForIceGathering(peer.connection);
-  addSystem(`Отправлен запрос голоса для ${memberName(actorNr)}.`);
-  sendDescription(actorNr, "offer", peer.connection.localDescription);
-}
-
-async function handleSignal(actorNr, data) {
-  if (!data) return;
-  if (!state.voiceEnabled) return;
-  const peer = ensurePeer(actorNr, false);
-  const connection = peer.connection;
-  if (data.kind === "offer") {
-    addSystem(`Получен запрос голоса от ${memberName(actorNr)}.`);
-    await connection.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: data.sdp }));
-    await flushPendingCandidates(peer);
-    const answer = await connection.createAnswer();
-    await connection.setLocalDescription(answer);
-    await waitForIceGathering(connection);
-    sendDescription(actorNr, "answer", connection.localDescription);
-  }
-  if (data.kind === "answer") {
-    addSystem(`Получен ответ голоса от ${memberName(actorNr)}.`);
-    await connection.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: data.sdp }));
-    await flushPendingCandidates(peer);
-  }
-  if (data.kind === "candidate") {
-    const candidate = new RTCIceCandidate({
-      candidate: data.candidate,
-      sdpMid: data.sdpMid || null,
-      sdpMLineIndex: Number(data.sdpMLineIndex),
-      usernameFragment: data.usernameFragment || null,
-    });
-    if (connection.remoteDescription) {
-      await connection.addIceCandidate(candidate);
-    } else {
-      peer.pendingCandidates.push(candidate);
-    }
-  }
-}
-
-async function flushPendingCandidates(peer) {
-  while (peer.pendingCandidates.length) {
-    await peer.connection.addIceCandidate(peer.pendingCandidates.shift());
-  }
-}
-
-function waitForIceGathering(connection) {
-  if (connection.iceGatheringState === "complete") {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const timeout = window.setTimeout(() => {
-      connection.removeEventListener("icegatheringstatechange", checkState);
-      resolve();
-    }, 5000);
-    function checkState() {
-      if (connection.iceGatheringState === "complete") {
-        window.clearTimeout(timeout);
-        connection.removeEventListener("icegatheringstatechange", checkState);
-        resolve();
-      }
-    }
-    connection.addEventListener("icegatheringstatechange", checkState);
-  });
-}
-
-function sendDescription(to, kind, description) {
-  sendSignal(to, { kind, sdp: description.sdp });
-}
-
-function sendSignal(to, payload) {
-  state.client.raiseEvent(EVENT_SIGNAL, payload, { targetActors: [Number(to)] });
-}
-
-function handleVoiceEvent(actorNr, data) {
-  if (actorNr === myActorNr()) return;
-  if (!data) return;
-  if (data.type === "ready") {
-    state.voiceMembers.add(actorNr);
-    addSystem(`${memberName(actorNr)} вошел в голос.`);
-    renderMembers();
-    if (state.voiceEnabled) {
-      ensurePeer(actorNr, myActorNr() > actorNr);
-    }
-  }
-  if (data.type === "speaking") {
-    if (data.value) {
-      state.speakingMembers.add(actorNr);
-    } else {
-      state.speakingMembers.delete(actorNr);
-    }
-    renderMembers();
-  }
-  if (data.type === "left") {
-    state.voiceMembers.delete(actorNr);
-    state.speakingMembers.delete(actorNr);
-    closePeer(actorNr);
-    addSystem(`${memberName(actorNr)} вышел из голоса.`);
-    renderMembers();
-  }
-}
-
-function closePeer(actorNr) {
-  const peer = state.peers.get(actorNr);
-  if (!peer) return;
-  peer.connection.close();
-  peer.audio.remove();
-  state.peers.delete(actorNr);
+  state.audioElements.set(key, audio);
+  applyAudioOutput(audio);
+  updateOneVolume(participantName(participant), audio);
+  audio.play().catch(() => addSystem("Нажми «Включить звук», чтобы слышать участников."));
   renderMembers();
 }
 
+function removeAudioTrack(key) {
+  const audio = state.audioElements.get(key);
+  if (!audio) return;
+  audio.remove();
+  state.audioElements.delete(key);
+}
+
+function removeParticipantAudio(identity) {
+  for (const [key, audio] of state.audioElements) {
+    if (audio.dataset.participantIdentity === identity) removeAudioTrack(key);
+  }
+}
+
 async function enableRemoteSound() {
-  let started = 0;
-  for (const peer of state.peers.values()) {
+  const room = state.livekitRoom;
+  if (!room) {
+    addSystem("Сначала войди в голос.");
+    return;
+  }
+  try {
+    await room.startAudio();
+    for (const audio of state.audioElements.values()) await audio.play();
+    addSystem("Воспроизведение голоса включено.");
+  } catch (error) {
+    addSystem(`Не удалось включить звук: ${error.message}`);
+  }
+}
+
+async function changeAudioOutput() {
+  const room = state.livekitRoom;
+  if (room && el.speaker.value) {
     try {
-      peer.audio.muted = false;
-      await peer.audio.play();
-      started += 1;
-    } catch (error) {
-      addSystem(`Не удалось включить воспроизведение: ${error.message}`);
+      await room.switchActiveDevice("audiooutput", el.speaker.value);
+    } catch {
+      // Some mobile browsers do not support selecting an output device.
     }
   }
-  if (started) {
-    addSystem(`Воспроизведение включено для потоков: ${started}.`);
-  } else {
-    addSystem("Удаленных голосовых потоков пока нет. Проверь, что второй пользователь вошел в голос.");
-  }
+  for (const audio of state.audioElements.values()) applyAudioOutput(audio);
 }
 
 function updateAllVolumes() {
-  for (const [actorNr, peer] of state.peers) {
-    updateOneVolume(actorNr, peer.audio);
+  saveSettings();
+  for (const audio of state.audioElements.values()) {
+    updateOneVolume(audio.dataset.participantName, audio);
   }
 }
 
-function updateOneVolume(actorNr, audio) {
+function updateOneVolume(name, audio) {
   const master = Number(el.masterVolume.value) / 100;
-  const participant = state.volumes.get(actorNr) ?? 1;
+  const participant = state.volumes.get(name) ?? 1;
   audio.volume = Math.max(0, Math.min(1, master * participant));
 }
 
@@ -523,98 +450,68 @@ function syncMembers() {
   renderMembers();
 }
 
+function syncVoiceParticipants() {
+  const room = state.livekitRoom;
+  if (!room) return;
+  state.voiceParticipants.clear();
+  state.voiceParticipants.set(room.localParticipant.identity, participantName(room.localParticipant));
+  for (const participant of room.remoteParticipants.values()) {
+    state.voiceParticipants.set(participant.identity, participantName(participant));
+  }
+}
+
 function renderMembers() {
   el.members.innerHTML = "";
+  const renderedNames = new Set();
   for (const [actorNr, name] of state.members) {
-    const row = document.createElement("div");
-    row.className = "member";
-    row.innerHTML = `
-      <div class="member-name">
-        <span>${escapeHtml(name)}${actorNr === myActorNr() ? " (ты)" : ""}</span>
-        <span class="speaking-dot ${state.speakingMembers.has(actorNr) ? "active" : ""}" title="говорит"></span>
-      </div>
-      <small>${voiceLabel(actorNr)}</small>
-    `;
-    if (actorNr !== myActorNr()) {
-      const slider = document.createElement("input");
-      slider.type = "range";
-      slider.min = "0";
-      slider.max = "200";
-      slider.value = String((state.volumes.get(actorNr) ?? 1) * 100);
-      slider.addEventListener("input", () => {
-        state.volumes.set(actorNr, Number(slider.value) / 100);
-        const peer = state.peers.get(actorNr);
-        if (peer) updateOneVolume(actorNr, peer.audio);
-      });
-      row.appendChild(slider);
-    }
-    el.members.appendChild(row);
+    renderMemberRow(name, actorNr === myActorNr(), renderedNames);
+  }
+  for (const name of state.voiceParticipants.values()) {
+    if (!renderedNames.has(name)) renderMemberRow(name, name === el.name.value.trim(), renderedNames);
   }
 }
 
-function voiceLabel(actorNr) {
-  if (actorNr === myActorNr()) {
-    return state.voiceEnabled ? (state.speakingMembers.has(actorNr) ? "ты говоришь" : "ты в голосе") : "локальный пользователь";
-  }
-  if (!state.voiceMembers.has(actorNr)) {
-    return "не в голосе";
-  }
-  const peer = state.peers.get(actorNr);
-  const connection = peer?.connection.connectionState;
-  const ice = peer?.connection.iceConnectionState;
-  const status = connection && connection !== "new" ? connection : ice || connection;
-  if (state.speakingMembers.has(actorNr)) {
-    return `говорит${status ? `, связь: ${status}` : ""}`;
-  }
-  return `в голосе${status ? `, связь: ${status}` : ""}`;
-}
-
-function startSpeakingDetector() {
-  stopSpeakingDetector();
-  if (!state.analyser) return;
-  const data = new Uint8Array(state.analyser.fftSize);
-  let lastSent = false;
-  let lastChangeAt = 0;
-  state.vadTimer = window.setInterval(() => {
-    state.analyser.getByteTimeDomainData(data);
-    let sum = 0;
-    for (const value of data) {
-      const centered = value - 128;
-      sum += centered * centered;
-    }
-    const rms = Math.sqrt(sum / data.length) / 128;
-    const now = Date.now();
-    const isSpeaking = rms > 0.035;
-    if (isSpeaking !== state.speaking && now - lastChangeAt > 120) {
-      state.speaking = isSpeaking;
-      lastChangeAt = now;
-      if (isSpeaking) {
-        state.speakingMembers.add(myActorNr());
-      } else {
-        state.speakingMembers.delete(myActorNr());
+function renderMemberRow(name, isLocal, renderedNames) {
+  renderedNames.add(name);
+  const row = document.createElement("div");
+  row.className = "member";
+  row.innerHTML = `
+    <div class="member-name">
+      <span>${escapeHtml(name)}${isLocal ? " (ты)" : ""}</span>
+      <span class="speaking-dot ${state.speakingNames.has(name) ? "active" : ""}" title="говорит"></span>
+    </div>
+    <small>${voiceLabel(name, isLocal)}</small>
+  `;
+  if (!isLocal) {
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "200";
+    slider.value = String((state.volumes.get(name) ?? 1) * 100);
+    slider.addEventListener("input", () => {
+      state.volumes.set(name, Number(slider.value) / 100);
+      for (const audio of state.audioElements.values()) {
+        if (audio.dataset.participantName === name) updateOneVolume(name, audio);
       }
-      renderMembers();
-    }
-    if (state.speaking !== lastSent && state.client?.isJoinedToRoom?.()) {
-      lastSent = state.speaking;
-      state.client.raiseEvent(
-        EVENT_VOICE,
-        { type: "speaking", value: state.speaking },
-        { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All }
-      );
-    }
-  }, 80);
+    });
+    row.appendChild(slider);
+  }
+  el.members.appendChild(row);
 }
 
-function stopSpeakingDetector() {
-  if (state.vadTimer) {
-    window.clearInterval(state.vadTimer);
-    state.vadTimer = null;
+function voiceLabel(name, isLocal) {
+  const inVoice = [...state.voiceParticipants.values()].includes(name);
+  const speaking = state.speakingNames.has(name);
+  if (isLocal) {
+    if (!inVoice) return "не в голосе";
+    return speaking ? "ты говоришь" : "ты в голосе";
   }
-  if (state.speaking && state.client?.isJoinedToRoom?.()) {
-    state.client.raiseEvent(EVENT_VOICE, { type: "speaking", value: false }, { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All });
-  }
-  state.speaking = false;
+  if (!inVoice) return "не в голосе";
+  return speaking ? "говорит" : "в голосе";
+}
+
+function participantName(participant) {
+  return participant.name || participant.identity || "Участник";
 }
 
 function memberName(actorNr) {

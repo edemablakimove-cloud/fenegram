@@ -1,7 +1,7 @@
 {
   "name": "Fenegram",
   "short_name": "Fenegram",
-  "description": "Один общий текстовый и голосовой канал, созданный при помощи Photon.",
+  "description": "Один общий текстовый и голосовой канал на Photon и LiveKit.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#15171c",
