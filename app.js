@@ -412,6 +412,7 @@ function bindLiveKitEvents(room) {
   room.on(events.ParticipantDisconnected, (participant) => {
     state.voiceParticipants.delete(participant.identity);
     removeParticipantAudio(participant.identity);
+    removeParticipantVideo(participant.identity);
     addSystem(`${participantName(participant)} вышел из голоса.`);
     renderMembers();
   });
@@ -430,7 +431,7 @@ function bindLiveKitEvents(room) {
   room.on(events.TrackUnsubscribed, (track, publication) => {
     const key = publication.trackSid || track.sid;
     if (track.kind === window.LivekitClient.Track.Kind.Audio) removeAudioTrack(key);
-    if (track.kind === window.LivekitClient.Track.Kind.Video) removeVideoTile(key);
+    if (track.kind === window.LivekitClient.Track.Kind.Video) removeVideoTilesForPublication(publication);
     track.detach().forEach((element) => element.remove());
   });
 
@@ -442,7 +443,7 @@ function bindLiveKitEvents(room) {
   });
 
   room.on(events.LocalTrackUnpublished, (publication) => {
-    removeVideoTile(publication.trackSid);
+    removeVideoTilesForPublication(publication);
     if (publication.source === window.LivekitClient.Track.Source.Camera) state.cameraEnabled = false;
     if (publication.source === window.LivekitClient.Track.Source.ScreenShare) state.screenShareEnabled = false;
     updateVoiceControls();
@@ -648,6 +649,7 @@ async function toggleCamera() {
       deviceId: el.cameraSelect.value || undefined,
     });
     state.cameraEnabled = next;
+    if (!next) removeLocalVideoTiles(window.LivekitClient.Track.Source.Camera);
     await refreshDevices();
     updateVoiceControls();
     addSystem(next ? "Камера включена." : "Камера выключена.");
@@ -665,6 +667,7 @@ async function toggleScreenShare() {
       audio: true,
     });
     state.screenShareEnabled = next;
+    if (!next) removeLocalVideoTiles(window.LivekitClient.Track.Source.ScreenShare);
     updateVoiceControls();
     addSystem(next ? "Демонстрация экрана включена." : "Демонстрация экрана остановлена.");
   } catch (error) {
@@ -715,6 +718,33 @@ function removeVideoTile(key) {
   entry.tile.remove();
   state.videoTiles.delete(key);
   el.videoStage.hidden = state.videoTiles.size === 0;
+}
+
+function removeVideoTilesForPublication(publication) {
+  for (const [key, entry] of state.videoTiles) {
+    if (
+      entry.publication === publication ||
+      (publication.trackSid && entry.publication.trackSid === publication.trackSid)
+    ) {
+      removeVideoTile(key);
+    }
+  }
+}
+
+function removeLocalVideoTiles(source) {
+  for (const [key, entry] of state.videoTiles) {
+    if (entry.isLocal && entry.publication.source === source) {
+      removeVideoTile(key);
+    }
+  }
+}
+
+function removeParticipantVideo(identity) {
+  for (const [key, entry] of state.videoTiles) {
+    if (entry.participant.identity === identity) {
+      removeVideoTile(key);
+    }
+  }
 }
 
 async function restartVideoPublication(publication, track, participant, isLocal) {

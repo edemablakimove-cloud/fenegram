@@ -249,14 +249,22 @@ h2 {
 
 .chat {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: max-content minmax(0, 1fr) max-content;
+  min-height: 0;
   min-width: 0;
 }
 
 .video-stage {
+  grid-row: 1;
+  max-height: 62vh;
+  overflow: auto;
   border-bottom: 1px solid var(--line);
   background: #111419;
   padding: 14px;
+}
+
+.video-stage[hidden] {
+  display: none;
 }
 
 .video-stage-header {
@@ -303,6 +311,7 @@ h2 {
 }
 
 .messages {
+  grid-row: 2;
   overflow: auto;
   padding: 18px 20px;
 }
@@ -345,11 +354,19 @@ h2 {
 }
 
 .composer {
+  grid-row: 3;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: center;
   gap: 10px;
   border-top: 1px solid var(--line);
   padding: 14px;
+}
+
+.composer input,
+.composer button {
+  height: 40px;
+  min-height: 40px;
 }
 
 .members {
