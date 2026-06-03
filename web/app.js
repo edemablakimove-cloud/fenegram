@@ -1,9 +1,12 @@
 const ROOM_NAME = "main";
 const EVENT_TEXT = 1;
+const EVENT_DELETE_MESSAGE = 2;
 const APP_VERSION = "0.2.0";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
 const NAME_CHANGE_INTERVAL = 24 * 60 * 60 * 1000;
+const CHAT_HISTORY_KEY = "pm.chatHistory";
+const CHAT_HISTORY_LIMIT = 100;
 
 const state = {
   client: null,
@@ -25,6 +28,11 @@ const state = {
   connecting: false,
   micMuted: false,
   deafened: false,
+  cameraEnabled: false,
+  screenShareEnabled: false,
+  videoTiles: new Map(),
+  seenMessageIds: new Set(),
+  clientId: "",
 };
 
 const el = {
@@ -35,35 +43,47 @@ const el = {
   saveSettings: document.querySelector("#saveSettingsBtn"),
   nameChangeHint: document.querySelector("#nameChangeHint"),
   channelTab: document.querySelector("#channelTabBtn"),
+  systemTab: document.querySelector("#systemTabBtn"),
   settingsTab: document.querySelector("#settingsTabBtn"),
   channelView: document.querySelector("#channelView"),
+  systemView: document.querySelector("#systemView"),
   settingsView: document.querySelector("#settingsView"),
   voice: document.querySelector("#voiceBtn"),
   mute: document.querySelector("#muteBtn"),
   deafen: document.querySelector("#deafenBtn"),
+  camera: document.querySelector("#cameraBtn"),
+  screenShare: document.querySelector("#screenShareBtn"),
   voiceStatus: document.querySelector("#voiceStatus"),
   status: document.querySelector("#statusText"),
   badge: document.querySelector("#connectionBadge"),
   messages: document.querySelector("#messages"),
+  videoStage: document.querySelector("#videoStage"),
+  videoGrid: document.querySelector("#videoGrid"),
+  systemMessages: document.querySelector("#systemMessages"),
   form: document.querySelector("#messageForm"),
   message: document.querySelector("#messageInput"),
   members: document.querySelector("#membersList"),
   mic: document.querySelector("#micSelect"),
   speaker: document.querySelector("#speakerSelect"),
+  cameraSelect: document.querySelector("#cameraSelect"),
   testMic: document.querySelector("#testMicBtn"),
   testSpeaker: document.querySelector("#testSpeakerBtn"),
   deviceTestStatus: document.querySelector("#deviceTestStatus"),
   masterVolume: document.querySelector("#masterVolume"),
   micVolume: document.querySelector("#micVolume"),
+  videoQuality: document.querySelector("#videoQuality"),
+  videoQualityLabel: document.querySelector("#videoQualityLabel"),
 };
 
 loadSettings();
+loadChatHistory();
 refreshDevices();
 setConnectedUi(false);
 updateNameChangeUi();
 window.setTimeout(connect, 100);
 
 el.channelTab.addEventListener("click", () => showView("channel"));
+el.systemTab.addEventListener("click", () => showView("system"));
 el.settingsTab.addEventListener("click", () => showView("settings"));
 el.unlockAppId.addEventListener("change", () => {
   el.appId.disabled = !el.unlockAppId.checked;
@@ -72,6 +92,8 @@ el.saveSettings.addEventListener("click", saveUserSettings);
 el.voice.addEventListener("click", toggleVoice);
 el.mute.addEventListener("click", toggleMute);
 el.deafen.addEventListener("click", toggleDeafen);
+el.camera.addEventListener("click", toggleCamera);
+el.screenShare.addEventListener("click", toggleScreenShare);
 el.form.addEventListener("submit", sendMessage);
 el.mic.addEventListener("change", () => {
   localStorage.setItem("pm.micDevice", el.mic.value);
@@ -81,12 +103,16 @@ el.speaker.addEventListener("change", () => {
   localStorage.setItem("pm.speakerDevice", el.speaker.value);
   changeAudioOutput();
 });
+el.cameraSelect.addEventListener("change", changeCamera);
 el.testMic.addEventListener("click", testMicrophone);
 el.testSpeaker.addEventListener("click", testSpeaker);
 el.micVolume.addEventListener("input", updateMicGain);
 el.masterVolume.addEventListener("input", updateAllVolumes);
+el.videoQuality.addEventListener("input", updateVideoQuality);
 
 function loadSettings() {
+  state.clientId = localStorage.getItem("pm.clientId") || crypto.randomUUID();
+  localStorage.setItem("pm.clientId", state.clientId);
   el.appId.value = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
   let nickname = localStorage.getItem("pm.name");
   if (!nickname) {
@@ -97,6 +123,8 @@ function loadSettings() {
   el.region.value = localStorage.getItem("pm.region") || "EU";
   el.masterVolume.value = localStorage.getItem("pm.masterVolume") || "100";
   el.micVolume.value = localStorage.getItem("pm.micVolume") || "100";
+  el.videoQuality.value = localStorage.getItem("pm.videoQuality") || "2";
+  updateVideoQualityLabel();
 }
 
 function persistSettings() {
@@ -105,11 +133,13 @@ function persistSettings() {
   localStorage.setItem("pm.region", el.region.value);
   localStorage.setItem("pm.masterVolume", el.masterVolume.value);
   localStorage.setItem("pm.micVolume", el.micVolume.value);
+  localStorage.setItem("pm.videoQuality", el.videoQuality.value);
 }
 
 function persistAudioSettings() {
   localStorage.setItem("pm.masterVolume", el.masterVolume.value);
   localStorage.setItem("pm.micVolume", el.micVolume.value);
+  localStorage.setItem("pm.videoQuality", el.videoQuality.value);
 }
 
 async function refreshDevices() {
@@ -117,10 +147,11 @@ async function refreshDevices() {
   const devices = await navigator.mediaDevices.enumerateDevices();
   fillDeviceSelect(el.mic, devices.filter((device) => device.kind === "audioinput"), "Системный микрофон");
   fillDeviceSelect(el.speaker, devices.filter((device) => device.kind === "audiooutput"), "Системные наушники/динамики");
+  fillDeviceSelect(el.cameraSelect, devices.filter((device) => device.kind === "videoinput"), "Системная камера");
 }
 
 function fillDeviceSelect(select, devices, fallback) {
-  const storageKey = select === el.mic ? "pm.micDevice" : "pm.speakerDevice";
+  const storageKey = select === el.mic ? "pm.micDevice" : select === el.speaker ? "pm.speakerDevice" : "pm.cameraDevice";
   const previous = select.value || localStorage.getItem(storageKey) || "";
   select.innerHTML = `<option value="">${fallback}</option>`;
   for (const device of devices) {
@@ -136,9 +167,12 @@ function fillDeviceSelect(select, devices, fallback) {
 
 function showView(view) {
   const settings = view === "settings";
-  el.channelView.hidden = settings;
+  const system = view === "system";
+  el.channelView.hidden = settings || system;
+  el.systemView.hidden = !system;
   el.settingsView.hidden = !settings;
-  el.channelTab.classList.toggle("active", !settings);
+  el.channelTab.classList.toggle("active", !settings && !system);
+  el.systemTab.classList.toggle("active", system);
   el.settingsTab.classList.toggle("active", settings);
 }
 
@@ -266,7 +300,10 @@ function connect() {
 
   client.onEvent = function (code, data, actorNr) {
     if (code === EVENT_TEXT) {
-      addMessage(data.name || memberName(actorNr), data.text || "");
+      receiveChatMessage(data, actorNr);
+    }
+    if (code === EVENT_DELETE_MESSAGE) {
+      receiveDeleteMessage(data);
     }
   };
 
@@ -298,7 +335,7 @@ function sendMessage(event) {
   }
   state.client.raiseEvent(
     EVENT_TEXT,
-    { name: el.name.value.trim(), text },
+    { id: crypto.randomUUID(), senderId: state.clientId, name: el.name.value.trim(), text, time: Date.now() },
     { receivers: window.Photon.LoadBalancing.Constants.ReceiverGroup.All }
   );
   el.message.value = "";
@@ -380,13 +417,35 @@ function bindLiveKitEvents(room) {
   });
 
   room.on(events.TrackSubscribed, (track, publication, participant) => {
-    if (track.kind !== window.LivekitClient.Track.Kind.Audio) return;
-    attachAudioTrack(track, publication, participant);
+    if (track.kind === window.LivekitClient.Track.Kind.Audio) {
+      attachAudioTrack(track, publication, participant);
+      return;
+    }
+    if (track.kind === window.LivekitClient.Track.Kind.Video) {
+      applyPublicationVideoQuality(publication);
+      attachVideoTrack(track, publication, participant, false);
+    }
   });
 
   room.on(events.TrackUnsubscribed, (track, publication) => {
-    removeAudioTrack(publication.trackSid || track.sid);
-    track.detach().forEach((audio) => audio.remove());
+    const key = publication.trackSid || track.sid;
+    if (track.kind === window.LivekitClient.Track.Kind.Audio) removeAudioTrack(key);
+    if (track.kind === window.LivekitClient.Track.Kind.Video) removeVideoTile(key);
+    track.detach().forEach((element) => element.remove());
+  });
+
+  room.on(events.LocalTrackPublished, (publication, participant) => {
+    const track = publication.track;
+    if (track?.kind === window.LivekitClient.Track.Kind.Video) {
+      attachVideoTrack(track, publication, participant, true);
+    }
+  });
+
+  room.on(events.LocalTrackUnpublished, (publication) => {
+    removeVideoTile(publication.trackSid);
+    if (publication.source === window.LivekitClient.Track.Source.Camera) state.cameraEnabled = false;
+    if (publication.source === window.LivekitClient.Track.Source.ScreenShare) state.screenShareEnabled = false;
+    updateVoiceControls();
   });
 
   room.on(events.ActiveSpeakersChanged, (speakers) => {
@@ -454,11 +513,14 @@ function cleanupVoice() {
   state.voiceEnabled = false;
   state.micMuted = false;
   state.deafened = false;
+  state.cameraEnabled = false;
+  state.screenShareEnabled = false;
   el.voice.textContent = "Войти в голос";
   state.voiceParticipants.clear();
   state.speakingNames.clear();
   for (const audio of state.audioElements.values()) audio.remove();
   state.audioElements.clear();
+  for (const key of state.videoTiles.keys()) removeVideoTile(key);
   if (state.rawStream) state.rawStream.getTracks().forEach((track) => track.stop());
   if (state.localOutputTrack) state.localOutputTrack.stop();
   if (state.audioContext) state.audioContext.close().catch(() => {});
@@ -560,8 +622,12 @@ async function applyMicrophoneMute() {
 function updateVoiceControls() {
   el.mute.disabled = !state.voiceEnabled || state.deafened;
   el.deafen.disabled = !state.voiceEnabled;
+  el.camera.disabled = !state.voiceEnabled;
+  el.screenShare.disabled = !state.voiceEnabled;
   el.mute.textContent = state.micMuted ? "Включить микрофон" : "Выключить микрофон";
   el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
+  el.camera.textContent = state.cameraEnabled ? "Выключить камеру" : "Включить камеру";
+  el.screenShare.textContent = state.screenShareEnabled ? "Остановить демонстрацию" : "Показать экран";
   if (!state.voiceEnabled) {
     el.voiceStatus.textContent = "Не в голосовом канале";
   } else if (state.deafened) {
@@ -571,6 +637,129 @@ function updateVoiceControls() {
   } else {
     el.voiceStatus.textContent = "В голосовом канале";
   }
+}
+
+async function toggleCamera() {
+  const room = state.livekitRoom;
+  if (!room) return;
+  try {
+    const next = !state.cameraEnabled;
+    await room.localParticipant.setCameraEnabled(next, {
+      deviceId: el.cameraSelect.value || undefined,
+    });
+    state.cameraEnabled = next;
+    await refreshDevices();
+    updateVoiceControls();
+    addSystem(next ? "Камера включена." : "Камера выключена.");
+  } catch (error) {
+    addSystem(`Не удалось переключить камеру: ${error.message}`);
+  }
+}
+
+async function toggleScreenShare() {
+  const room = state.livekitRoom;
+  if (!room) return;
+  try {
+    const next = !state.screenShareEnabled;
+    await room.localParticipant.setScreenShareEnabled(next, {
+      audio: true,
+    });
+    state.screenShareEnabled = next;
+    updateVoiceControls();
+    addSystem(next ? "Демонстрация экрана включена." : "Демонстрация экрана остановлена.");
+  } catch (error) {
+    addSystem(`Не удалось переключить демонстрацию экрана: ${error.message}`);
+  }
+}
+
+async function changeCamera() {
+  localStorage.setItem("pm.cameraDevice", el.cameraSelect.value);
+  if (!state.cameraEnabled || !state.livekitRoom || !el.cameraSelect.value) return;
+  try {
+    await state.livekitRoom.switchActiveDevice("videoinput", el.cameraSelect.value);
+  } catch (error) {
+    addSystem(`Не удалось сменить камеру: ${error.message}`);
+  }
+}
+
+function attachVideoTrack(track, publication, participant, isLocal) {
+  const key = publication.trackSid || track.sid || `${participant.identity}-${Date.now()}`;
+  removeVideoTile(key);
+  const video = track.attach();
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = isLocal;
+
+  const tile = document.createElement("article");
+  tile.className = "video-tile";
+  const footer = document.createElement("div");
+  footer.className = "video-tile-footer";
+  const source = publication.source === window.LivekitClient.Track.Source.ScreenShare ? "демонстрация" : "камера";
+  const label = document.createElement("span");
+  label.textContent = `${participantName(participant)}${isLocal ? " (ты)" : ""}: ${source}`;
+  const restart = document.createElement("button");
+  restart.type = "button";
+  restart.textContent = "Перезапустить";
+  restart.addEventListener("click", () => restartVideoPublication(publication, track, participant, isLocal));
+  footer.append(label, restart);
+  tile.append(video, footer);
+  el.videoGrid.appendChild(tile);
+  state.videoTiles.set(key, { tile, video, track, publication, participant, isLocal });
+  el.videoStage.hidden = false;
+}
+
+function removeVideoTile(key) {
+  const entry = state.videoTiles.get(key);
+  if (!entry) return;
+  entry.track.detach().forEach((element) => element.remove());
+  entry.tile.remove();
+  state.videoTiles.delete(key);
+  el.videoStage.hidden = state.videoTiles.size === 0;
+}
+
+async function restartVideoPublication(publication, track, participant, isLocal) {
+  const key = publication.trackSid || track.sid;
+  try {
+    if (!isLocal && typeof publication.setEnabled === "function") {
+      publication.setEnabled(false);
+      await wait(250);
+      publication.setEnabled(true);
+      applyPublicationVideoQuality(publication);
+    }
+    removeVideoTile(key);
+    await wait(100);
+    if (publication.track) attachVideoTrack(publication.track, publication, participant, isLocal);
+    addSystem(`Видео ${participantName(participant)} перезапущено.`);
+  } catch (error) {
+    addSystem(`Не удалось перезапустить видео: ${error.message}`);
+  }
+}
+
+function updateVideoQuality() {
+  localStorage.setItem("pm.videoQuality", el.videoQuality.value);
+  updateVideoQualityLabel();
+  const room = state.livekitRoom;
+  if (!room) return;
+  for (const participant of room.remoteParticipants.values()) {
+    for (const publication of participant.videoTrackPublications.values()) {
+      applyPublicationVideoQuality(publication);
+    }
+  }
+}
+
+function updateVideoQualityLabel() {
+  const labels = { "1": "Низкое качество", "2": "Среднее качество", "3": "Высокое качество" };
+  el.videoQualityLabel.textContent = labels[el.videoQuality.value] || labels["2"];
+}
+
+function applyPublicationVideoQuality(publication) {
+  if (typeof publication.setVideoQuality !== "function") return;
+  const quality = {
+    "1": 0,
+    "2": 1,
+    "3": 2,
+  }[el.videoQuality.value];
+  publication.setVideoQuality(quality);
 }
 
 async function changeAudioOutput() {
@@ -815,16 +1004,108 @@ function setStatus(text) {
   el.status.textContent = text;
 }
 
-function addSystem(text) {
-  addMessage("Система", text, true);
+function loadChatHistory() {
+  let history = [];
+  try {
+    history = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+  } catch {
+    history = [];
+  }
+  for (const message of history.slice(-CHAT_HISTORY_LIMIT)) {
+    if (message.id) state.seenMessageIds.add(message.id);
+    addChatMessage(message);
+  }
 }
 
-function addMessage(author, text, system = false) {
+function receiveChatMessage(data, actorNr) {
+  const message = {
+    id: data?.id || `${actorNr}-${data?.time || Date.now()}-${data?.text || ""}`,
+    senderId: data?.senderId || "",
+    name: data?.name || memberName(actorNr),
+    text: data?.text || "",
+    time: data?.time || Date.now(),
+    own: actorNr === myActorNr() || data?.senderId === state.clientId,
+  };
+  if (state.seenMessageIds.has(message.id)) return;
+  state.seenMessageIds.add(message.id);
+  addChatMessage(message);
+  saveChatMessage(message);
+}
+
+function receiveDeleteMessage(data) {
+  const messageId = data?.id;
+  if (!messageId) return;
+  removeChatMessage(messageId);
+}
+
+function deleteOwnMessage(messageId) {
+  if (!state.joined) return;
+  removeChatMessage(messageId);
+  state.client.raiseEvent(
+    EVENT_DELETE_MESSAGE,
+    { id: messageId },
+    { receivers: window.Photon.LoadBalancing.Constants.ReceiverGroup.All }
+  );
+}
+
+function removeChatMessage(messageId) {
+  const item = el.messages.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (item) item.remove();
+  let history = [];
+  try {
+    history = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+  } catch {
+    history = [];
+  }
+  localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history.filter((message) => message.id !== messageId)));
+}
+
+function addChatMessage(message) {
+  const item = document.createElement("div");
+  item.className = "message";
+  item.dataset.messageId = message.id || "";
+  const header = document.createElement("div");
+  header.className = "message-header";
+  const author = document.createElement("div");
+  author.className = "author";
+  author.textContent = message.name || "Участник";
+  header.appendChild(author);
+  if (message.own || message.senderId === state.clientId) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "message-delete";
+    remove.textContent = "Удалить";
+    remove.addEventListener("click", () => deleteOwnMessage(message.id));
+    header.appendChild(remove);
+  }
+  const text = document.createElement("div");
+  text.textContent = message.text || "";
+  item.append(header, text);
+  el.messages.appendChild(item);
+  el.messages.scrollTop = el.messages.scrollHeight;
+}
+
+function saveChatMessage(message) {
+  let history = [];
+  try {
+    history = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+  } catch {
+    history = [];
+  }
+  history.push(message);
+  localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history.slice(-CHAT_HISTORY_LIMIT)));
+}
+
+function addSystem(text) {
+  addMessage("Система", text, true, el.systemMessages);
+}
+
+function addMessage(author, text, system = false, container = el.messages) {
   const item = document.createElement("div");
   item.className = `message${system ? " system" : ""}`;
   item.innerHTML = `<div class="author">${escapeHtml(author)}</div><div>${escapeHtml(text)}</div>`;
-  el.messages.appendChild(item);
-  el.messages.scrollTop = el.messages.scrollHeight;
+  container.appendChild(item);
+  container.scrollTop = container.scrollHeight;
 }
 
 function escapeHtml(value) {
