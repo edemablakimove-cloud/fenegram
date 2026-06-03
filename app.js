@@ -1,6 +1,8 @@
 const ROOM_NAME = "main";
 const EVENT_TEXT = 1;
 const EVENT_DELETE_MESSAGE = 2;
+const EVENT_DIRECT_MESSAGE = 3;
+const EVENT_PROFILE = 4;
 const APP_VERSION = "0.2.0";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
@@ -33,6 +35,9 @@ const state = {
   videoTiles: new Map(),
   seenMessageIds: new Set(),
   clientId: "",
+  profiles: new Map(),
+  directChats: new Map(),
+  selectedDirectActor: null,
 };
 
 const el = {
@@ -43,9 +48,11 @@ const el = {
   saveSettings: document.querySelector("#saveSettingsBtn"),
   nameChangeHint: document.querySelector("#nameChangeHint"),
   channelTab: document.querySelector("#channelTabBtn"),
+  directTab: document.querySelector("#directTabBtn"),
   systemTab: document.querySelector("#systemTabBtn"),
   settingsTab: document.querySelector("#settingsTabBtn"),
   channelView: document.querySelector("#channelView"),
+  directView: document.querySelector("#directView"),
   systemView: document.querySelector("#systemView"),
   settingsView: document.querySelector("#settingsView"),
   voice: document.querySelector("#voiceBtn"),
@@ -57,6 +64,11 @@ const el = {
   status: document.querySelector("#statusText"),
   badge: document.querySelector("#connectionBadge"),
   messages: document.querySelector("#messages"),
+  directMessages: document.querySelector("#directMessages"),
+  directStatus: document.querySelector("#directStatus"),
+  directUsers: document.querySelector("#directUsersList"),
+  directForm: document.querySelector("#directMessageForm"),
+  directMessage: document.querySelector("#directMessageInput"),
   videoStage: document.querySelector("#videoStage"),
   videoGrid: document.querySelector("#videoGrid"),
   systemMessages: document.querySelector("#systemMessages"),
@@ -73,6 +85,8 @@ const el = {
   micVolume: document.querySelector("#micVolume"),
   videoQuality: document.querySelector("#videoQuality"),
   videoQualityLabel: document.querySelector("#videoQualityLabel"),
+  connectionCheck: document.querySelector("#connectionCheckBtn"),
+  connectionCheckStatus: document.querySelector("#connectionCheckStatus"),
 };
 
 loadSettings();
@@ -83,6 +97,7 @@ updateNameChangeUi();
 window.setTimeout(connect, 100);
 
 el.channelTab.addEventListener("click", () => showView("channel"));
+el.directTab.addEventListener("click", () => showView("direct"));
 el.systemTab.addEventListener("click", () => showView("system"));
 el.settingsTab.addEventListener("click", () => showView("settings"));
 el.unlockAppId.addEventListener("change", () => {
@@ -95,6 +110,8 @@ el.deafen.addEventListener("click", toggleDeafen);
 el.camera.addEventListener("click", toggleCamera);
 el.screenShare.addEventListener("click", toggleScreenShare);
 el.form.addEventListener("submit", sendMessage);
+el.directForm.addEventListener("submit", sendDirectMessage);
+el.connectionCheck.addEventListener("click", runConnectionCheck);
 el.mic.addEventListener("change", () => {
   localStorage.setItem("pm.micDevice", el.mic.value);
   restartVoiceIfNeeded();
@@ -168,10 +185,13 @@ function fillDeviceSelect(select, devices, fallback) {
 function showView(view) {
   const settings = view === "settings";
   const system = view === "system";
-  el.channelView.hidden = settings || system;
+  const direct = view === "direct";
+  el.channelView.hidden = settings || system || direct;
+  el.directView.hidden = !direct;
   el.systemView.hidden = !system;
   el.settingsView.hidden = !settings;
-  el.channelTab.classList.toggle("active", !settings && !system);
+  el.channelTab.classList.toggle("active", !settings && !system && !direct);
+  el.directTab.classList.toggle("active", direct);
   el.systemTab.classList.toggle("active", system);
   el.settingsTab.classList.toggle("active", settings);
 }
@@ -230,7 +250,6 @@ function updateNameChangeUi() {
 }
 
 function reconnectTextChat() {
-  stopVoice();
   if (state.client) state.client.disconnect();
   cleanupConnection();
   window.setTimeout(connect, 250);
@@ -266,8 +285,10 @@ function connect() {
     if (clientState === LBC.State.Joined) {
       state.connecting = false;
       state.joined = true;
+      this.myActor().setCustomProperty("fenegramClientId", state.clientId);
       setConnectedUi(true);
       syncMembers();
+      broadcastProfile();
       addSystem("Подключено к главному каналу.");
     }
     if (clientState === LBC.State.Disconnected) {
@@ -290,12 +311,26 @@ function connect() {
 
   client.onActorJoin = function (actor) {
     state.members.set(actor.actorNr, actor.name || `User ${actor.actorNr}`);
+    profileFromActor(actor);
+    broadcastProfile();
     renderMembers();
+    renderDirectUsers();
   };
 
   client.onActorLeave = function (actor) {
     state.members.delete(actor.actorNr);
+    state.profiles.delete(actor.actorNr);
+    if (state.selectedDirectActor === actor.actorNr) {
+      state.selectedDirectActor = null;
+      renderDirectChat();
+    }
     renderMembers();
+    renderDirectUsers();
+  };
+
+  client.onActorPropertiesChange = function (actor) {
+    profileFromActor(actor);
+    renderDirectUsers();
   };
 
   client.onEvent = function (code, data, actorNr) {
@@ -305,6 +340,12 @@ function connect() {
     if (code === EVENT_DELETE_MESSAGE) {
       receiveDeleteMessage(data);
     }
+    if (code === EVENT_DIRECT_MESSAGE) {
+      receiveDirectMessage(data, actorNr);
+    }
+    if (code === EVENT_PROFILE) {
+      receiveProfile(data, actorNr);
+    }
   };
 
   setStatus("Подключение к Photon...");
@@ -312,7 +353,6 @@ function connect() {
 }
 
 function disconnect() {
-  stopVoice();
   if (state.client) state.client.disconnect();
   cleanupConnection();
 }
@@ -321,8 +361,13 @@ function cleanupConnection() {
   state.connecting = false;
   state.joined = false;
   state.members.clear();
+  state.profiles.clear();
+  state.selectedDirectActor = null;
   setConnectedUi(false);
+  setStatus("текстовый чат недоступен");
   renderMembers();
+  renderDirectUsers();
+  renderDirectChat();
 }
 
 function sendMessage(event) {
@@ -341,13 +386,111 @@ function sendMessage(event) {
   el.message.value = "";
 }
 
+function broadcastProfile() {
+  if (!state.client?.isJoinedToRoom?.()) return;
+  state.client.raiseEvent(
+    EVENT_PROFILE,
+    { clientId: state.clientId, name: el.name.value.trim() },
+    { receivers: window.Photon.LoadBalancing.Constants.ReceiverGroup.All }
+  );
+}
+
+function receiveProfile(data, actorNr) {
+  if (!data?.clientId || actorNr === myActorNr()) return;
+  state.profiles.set(actorNr, {
+    actorNr,
+    clientId: data.clientId,
+    name: data.name || memberName(actorNr),
+  });
+  renderDirectUsers();
+}
+
+function profileFromActor(actor) {
+  if (!actor || actor.actorNr === myActorNr()) return;
+  const clientId = actor.getCustomProperty?.("fenegramClientId");
+  if (!clientId) return;
+  state.profiles.set(actor.actorNr, {
+    actorNr: actor.actorNr,
+    clientId,
+    name: actor.name || `User ${actor.actorNr}`,
+  });
+}
+
+function sendDirectMessage(event) {
+  event.preventDefault();
+  const text = el.directMessage.value.trim();
+  const actorNr = state.selectedDirectActor;
+  const profile = state.profiles.get(actorNr);
+  if (!text || !actorNr || !profile || !state.joined) return;
+  const message = {
+    id: crypto.randomUUID(),
+    senderId: state.clientId,
+    senderName: el.name.value.trim(),
+    recipientId: profile.clientId,
+    recipientName: profile.name,
+    text,
+    time: Date.now(),
+  };
+  addDirectMessage(profile.clientId, message, true);
+  state.client.raiseEvent(EVENT_DIRECT_MESSAGE, message, { targetActors: [Number(actorNr)] });
+  el.directMessage.value = "";
+}
+
+function receiveDirectMessage(data, actorNr) {
+  if (!data?.senderId || !data?.text) return;
+  if (!state.profiles.has(actorNr)) {
+    state.profiles.set(actorNr, {
+      actorNr,
+      clientId: data.senderId,
+      name: data.senderName || memberName(actorNr),
+    });
+  }
+  addDirectMessage(data.senderId, data, false);
+  renderDirectUsers();
+  if (state.selectedDirectActor === actorNr) renderDirectChat();
+}
+
+function addDirectMessage(chatId, message, own) {
+  const chat = state.directChats.get(chatId) || [];
+  if (chat.some((item) => item.id === message.id)) return;
+  chat.push({ ...message, own });
+  state.directChats.set(chatId, chat.slice(-100));
+  if (state.profiles.get(state.selectedDirectActor)?.clientId === chatId) renderDirectChat();
+}
+
+function renderDirectUsers() {
+  el.directUsers.innerHTML = "";
+  for (const [actorNr, profile] of state.profiles) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `direct-user-button${state.selectedDirectActor === actorNr ? " active" : ""}`;
+    button.textContent = profile.name;
+    button.addEventListener("click", () => {
+      state.selectedDirectActor = actorNr;
+      renderDirectUsers();
+      renderDirectChat();
+    });
+    el.directUsers.appendChild(button);
+  }
+}
+
+function renderDirectChat() {
+  el.directMessages.innerHTML = "";
+  const profile = state.profiles.get(state.selectedDirectActor);
+  const enabled = Boolean(profile && state.joined);
+  el.directMessage.disabled = !enabled;
+  el.directForm.querySelector("button").disabled = !enabled;
+  el.directStatus.textContent = enabled ? `Переписка с ${profile.name}` : "Выбери пользователя справа";
+  if (!profile) return;
+  const chat = state.directChats.get(profile.clientId) || [];
+  for (const message of chat) {
+    addMessage(message.own ? el.name.value.trim() : profile.name, message.text, false, el.directMessages);
+  }
+}
+
 async function toggleVoice() {
   if (state.voiceEnabled) {
     stopVoice();
-    return;
-  }
-  if (!state.joined) {
-    addSystem("Сначала подключись к главному каналу.");
     return;
   }
   try {
@@ -911,6 +1054,39 @@ function setDeviceTestStatus(text) {
   el.deviceTestStatus.textContent = text;
 }
 
+async function runConnectionCheck() {
+  if (!window.LivekitClient?.ConnectionCheck) {
+    el.connectionCheckStatus.textContent = "Библиотека проверки LiveKit недоступна.";
+    return;
+  }
+  el.connectionCheck.disabled = true;
+  const photonStatus = state.joined ? "Photon: работает" : "Photon: нет подключения";
+  el.connectionCheckStatus.textContent = `${photonStatus}. LiveKit: проверка...`;
+  try {
+    const tokenSource = window.LivekitClient.TokenSource.sandboxTokenServer(LIVEKIT_SANDBOX_ID);
+    const credentials = await tokenSource.fetch({
+      roomName: `connection-check-${crypto.randomUUID().slice(0, 8)}`,
+      participantIdentity: `check-${crypto.randomUUID().slice(0, 8)}`,
+      participantName: "Fenegram connection check",
+    });
+    const check = new window.LivekitClient.ConnectionCheck(credentials.serverUrl, credentials.participantToken);
+    const results = [];
+    results.push(await check.checkWebsocket());
+    results.push(await check.checkWebRTC());
+    results.push(await check.checkTURN());
+    const successStatus = window.LivekitClient.CheckStatus?.SUCCESS ?? 3;
+    const labels = ["WebSocket", "WebRTC", "TURN"];
+    const summary = results.map((result, index) => `${labels[index]}: ${result.status === successStatus ? "работает" : "ошибка"}`);
+    el.connectionCheckStatus.textContent = `${photonStatus}. ${summary.join(". ")}.`;
+    addSystem(`Проверка соединения: ${summary.join(", ")}.`);
+  } catch (error) {
+    el.connectionCheckStatus.textContent = `${photonStatus}. LiveKit: ошибка ${error.message}`;
+    addSystem(`Проверка соединения LiveKit не выполнена: ${error.message}`);
+  } finally {
+    el.connectionCheck.disabled = false;
+  }
+}
+
 function wait(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -944,8 +1120,10 @@ function syncMembers() {
   state.members.clear();
   for (const actor of state.client.myRoomActorsArray()) {
     state.members.set(actor.actorNr, actor.name || `User ${actor.actorNr}`);
+    profileFromActor(actor);
   }
   renderMembers();
+  renderDirectUsers();
 }
 
 function syncVoiceParticipants() {
@@ -964,8 +1142,11 @@ function renderMembers() {
   for (const [actorNr, name] of state.members) {
     renderMemberRow(name, actorNr === myActorNr(), renderedNames);
   }
-  for (const name of state.voiceParticipants.values()) {
-    if (!renderedNames.has(name)) renderMemberRow(name, name === el.name.value.trim(), renderedNames);
+  for (const [identity, name] of state.voiceParticipants) {
+    if (!renderedNames.has(name)) {
+      const isLocal = identity === state.livekitRoom?.localParticipant?.identity || name === el.name.value.trim();
+      renderMemberRow(name, isLocal, renderedNames);
+    }
   }
 }
 
@@ -1023,7 +1204,7 @@ function myActorNr() {
 }
 
 function setConnectedUi(connected) {
-  el.voice.disabled = !connected;
+  el.voice.disabled = false;
   el.message.disabled = !connected;
   el.badge.textContent = connected ? "online" : "offline";
   el.badge.classList.toggle("online", connected);

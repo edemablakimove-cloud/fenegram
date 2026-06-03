@@ -23,6 +23,7 @@
 
         <nav class="sidebar-nav" aria-label="Навигация">
           <button id="channelTabBtn" class="nav-button active">Главный канал</button>
+          <button id="directTabBtn" class="nav-button">Личные сообщения</button>
           <button id="systemTabBtn" class="nav-button">Система</button>
           <button id="settingsTabBtn" class="nav-button">Настройки</button>
         </nav>
@@ -72,6 +73,28 @@
           </section>
         </section>
 
+        <section id="directView" class="view" hidden>
+          <header class="topbar">
+            <div>
+              <h2>Личные сообщения</h2>
+              <p id="directStatus">Выбери пользователя справа</p>
+            </div>
+          </header>
+          <section class="content">
+            <div class="chat">
+              <div id="directMessages" class="messages"></div>
+              <form id="directMessageForm" class="composer">
+                <input id="directMessageInput" placeholder="Написать личное сообщение" autocomplete="off" disabled />
+                <button class="primary" type="submit" disabled>Отправить</button>
+              </form>
+            </div>
+            <aside class="members">
+              <div class="section-title">Сейчас онлайн</div>
+              <div id="directUsersList"></div>
+            </aside>
+          </section>
+        </section>
+
         <section id="systemView" class="view" hidden>
           <header class="topbar">
             <div>
@@ -115,6 +138,8 @@
                 Разрешить изменение Photon App ID
               </label>
               <button id="saveSettingsBtn" class="primary">Сохранить настройки</button>
+              <button id="connectionCheckBtn">Проверить соединение</button>
+              <p id="connectionCheckStatus" class="device-test-status">Проверка соединения не запущена</p>
             </section>
 
             <section class="settings-section">
