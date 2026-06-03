@@ -561,6 +561,7 @@ function bindLiveKitEvents(room) {
   });
 
   room.on(events.TrackSubscribed, (track, publication, participant) => {
+    if (isLocalLiveKitParticipant(participant)) return;
     if (track.kind === window.LivekitClient.Track.Kind.Audio) {
       attachAudioTrack(track, publication, participant);
       return;
@@ -698,11 +699,13 @@ function updateMicGain() {
 }
 
 function attachAudioTrack(track, publication, participant) {
+  if (isLocalLiveKitParticipant(participant)) return;
   const key = publication.trackSid || track.sid || `${participant.identity}-${Date.now()}`;
   removeAudioTrack(key);
   const audio = track.attach();
   audio.autoplay = true;
   audio.playsInline = true;
+  audio.muted = false;
   audio.dataset.participantIdentity = participant.identity;
   audio.dataset.participantName = participantName(participant);
   audio.muted = state.deafened;
@@ -712,6 +715,10 @@ function attachAudioTrack(track, publication, participant) {
   updateOneVolume(participantName(participant), audio);
   audio.play().catch(() => {});
   renderMembers();
+}
+
+function isLocalLiveKitParticipant(participant) {
+  return Boolean(participant?.isLocal || participant?.identity === state.livekitRoom?.localParticipant?.identity);
 }
 
 function removeAudioTrack(key) {
