@@ -325,7 +325,14 @@ function createPeer(actorNr) {
 
   connection.onicecandidate = (event) => {
     if (event.candidate) {
-      sendSignal(actorNr, { type: "candidate", candidate: event.candidate.toJSON() });
+      const candidate = event.candidate.toJSON();
+      sendSignal(actorNr, {
+        kind: "candidate",
+        candidate: candidate.candidate || "",
+        sdpMid: candidate.sdpMid || "",
+        sdpMLineIndex: candidate.sdpMLineIndex ?? 0,
+        usernameFragment: candidate.usernameFragment || "",
+      });
     }
   };
   connection.ontrack = (event) => {
@@ -364,30 +371,35 @@ async function makeOffer(actorNr) {
   await peer.connection.setLocalDescription(offer);
   await waitForIceGathering(peer.connection);
   addSystem(`Отправлен запрос голоса для ${memberName(actorNr)}.`);
-  sendSignal(actorNr, { type: "offer", sdp: peer.connection.localDescription.toJSON() });
+  sendDescription(actorNr, "offer", peer.connection.localDescription);
 }
 
 async function handleSignal(actorNr, data) {
-  if (!data || Number(data.to) !== Number(myActorNr())) return;
+  if (!data) return;
   if (!state.voiceEnabled) return;
   const peer = ensurePeer(actorNr, false);
   const connection = peer.connection;
-  if (data.type === "offer") {
+  if (data.kind === "offer") {
     addSystem(`Получен запрос голоса от ${memberName(actorNr)}.`);
-    await connection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    await connection.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: data.sdp }));
     await flushPendingCandidates(peer);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
     await waitForIceGathering(connection);
-    sendSignal(actorNr, { type: "answer", sdp: connection.localDescription.toJSON() });
+    sendDescription(actorNr, "answer", connection.localDescription);
   }
-  if (data.type === "answer") {
+  if (data.kind === "answer") {
     addSystem(`Получен ответ голоса от ${memberName(actorNr)}.`);
-    await connection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    await connection.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: data.sdp }));
     await flushPendingCandidates(peer);
   }
-  if (data.type === "candidate") {
-    const candidate = new RTCIceCandidate(data.candidate);
+  if (data.kind === "candidate") {
+    const candidate = new RTCIceCandidate({
+      candidate: data.candidate,
+      sdpMid: data.sdpMid || null,
+      sdpMLineIndex: Number(data.sdpMLineIndex),
+      usernameFragment: data.usernameFragment || null,
+    });
     if (connection.remoteDescription) {
       await connection.addIceCandidate(candidate);
     } else {
@@ -422,8 +434,12 @@ function waitForIceGathering(connection) {
   });
 }
 
+function sendDescription(to, kind, description) {
+  sendSignal(to, { kind, sdp: description.sdp });
+}
+
 function sendSignal(to, payload) {
-  state.client.raiseEvent(EVENT_SIGNAL, { ...payload, to }, { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All });
+  state.client.raiseEvent(EVENT_SIGNAL, payload, { targetActors: [Number(to)] });
 }
 
 function handleVoiceEvent(actorNr, data) {
