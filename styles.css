@@ -191,10 +191,6 @@ h2 {
   margin-top: auto;
 }
 
-.account-panel {
-  gap: 10px;
-}
-
 .account-status {
   display: grid;
   gap: 2px;
@@ -329,6 +325,23 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px;
   gap: 8px;
+}
+
+.group-create-form,
+.group-invite-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
+}
+
+.group-invite-form {
+  margin-top: 2px;
+}
+
+.group-create-form button,
+.group-invite-form button {
+  min-height: 40px;
+  padding-inline: 10px;
 }
 
 .direct-search-results {

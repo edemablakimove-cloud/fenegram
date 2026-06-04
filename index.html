@@ -55,16 +55,6 @@
           <button id="settingsTabBtn" class="nav-button">Настройки</button>
         </nav>
 
-        <section class="panel account-panel">
-          <div class="section-title">Аккаунт</div>
-          <div id="accountStatus" class="account-status">Вход не настроен</div>
-          <div class="account-actions">
-            <button id="googleLoginBtn" type="button">Войти через Google</button>
-            <button id="vkLoginBtn" type="button">Войти через VK</button>
-            <button id="logoutBtn" type="button" hidden>Выйти из аккаунта</button>
-          </div>
-        </section>
-
         <section class="panel voice-panel">
           <div class="section-title">Голос</div>
           <button id="voiceBtn" class="primary">Войти в голос</button>
@@ -113,8 +103,8 @@
         <section id="directView" class="view" hidden>
           <header class="topbar">
             <div>
-              <h2>Личные сообщения</h2>
-              <p id="directStatus">Выбери чат слева или найди человека по @нику</p>
+              <h2>Личные сообщения и группы</h2>
+              <p id="directStatus">Выбери чат, группу или найди человека по @нику</p>
             </div>
             <button id="blockDirectBtn" type="button" disabled>Заблокировать</button>
           </header>
@@ -128,7 +118,15 @@
               <div class="section-title">Чаты</div>
               <div id="directChatList"></div>
               <div class="section-title">Группы</div>
-              <div class="empty-state">Группы подготовим следующим шагом</div>
+              <form id="groupCreateForm" class="group-create-form">
+                <input id="groupNameInput" autocomplete="off" maxlength="40" placeholder="Название группы" />
+                <button class="primary" type="submit">Создать</button>
+              </form>
+              <div id="groupList"></div>
+              <form id="groupInviteForm" class="group-invite-form" hidden>
+                <input id="groupInviteInput" autocomplete="off" placeholder="@ник для добавления" />
+                <button type="submit">Добавить</button>
+              </form>
             </aside>
             <div class="chat direct-chat">
               <div id="directMessages" class="messages"></div>
@@ -159,6 +157,16 @@
           </header>
 
           <div class="settings-content">
+            <section class="settings-section">
+              <div class="section-title">Аккаунт Fenegram</div>
+              <div id="accountStatus" class="account-status">Вход не настроен</div>
+              <div class="account-actions">
+                <button id="googleLoginBtn" type="button">Войти через Google</button>
+                <button id="vkLoginBtn" type="button">Войти через VK</button>
+                <button id="logoutBtn" type="button" hidden>Выйти из аккаунта</button>
+              </div>
+            </section>
+
             <section class="settings-section">
               <div class="section-title">Аккаунт и подключение</div>
               <label>

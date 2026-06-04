@@ -48,8 +48,16 @@ const state = {
   directProfiles: new Map(),
   directMessagesStore: [],
   selectedDirectUserId: null,
+  selectedConversationType: null,
   blockedUsers: new Set(),
   directChannel: null,
+  groups: new Map(),
+  groupMemberships: new Map(),
+  groupMessagesStore: [],
+  selectedGroupId: null,
+  groupChannel: null,
+  voiceRoomName: ROOM_NAME,
+  voiceRoomLabel: "Главный канал",
 };
 
 const el = {
@@ -124,6 +132,11 @@ const el = {
   directSearch: document.querySelector("#directSearchInput"),
   directSearchResults: document.querySelector("#directSearchResults"),
   directChatList: document.querySelector("#directChatList"),
+  groupCreateForm: document.querySelector("#groupCreateForm"),
+  groupName: document.querySelector("#groupNameInput"),
+  groupList: document.querySelector("#groupList"),
+  groupInviteForm: document.querySelector("#groupInviteForm"),
+  groupInvite: document.querySelector("#groupInviteInput"),
   blockDirect: document.querySelector("#blockDirectBtn"),
   userMenu: document.querySelector("#userMenu"),
   userMenuAvatar: document.querySelector("#userMenuAvatar"),
@@ -182,6 +195,8 @@ el.openAuthSettings.addEventListener("click", openAuthSettings);
 el.handleForm.addEventListener("submit", saveHandle);
 el.saveSettingsHandle.addEventListener("click", saveHandle);
 el.directSearchForm.addEventListener("submit", searchDirectUser);
+el.groupCreateForm.addEventListener("submit", createGroup);
+el.groupInviteForm.addEventListener("submit", inviteUserToGroup);
 el.blockDirect.addEventListener("click", toggleDirectBlock);
 el.userMenuMessage.addEventListener("click", () => {
   const profile = state.directProfiles.get(el.userMenu.dataset.userId);
@@ -202,7 +217,7 @@ document.addEventListener("click", (event) => {
 async function startApp() {
   await initAuth();
   refreshAppAccess();
-  if (canUseApp()) window.setTimeout(connect, 100);
+  if (canUseMainChannel()) window.setTimeout(connect, 100);
 }
 
 function loadSettings() {
@@ -309,6 +324,7 @@ async function initAuth() {
 
 async function applySession(session) {
   cleanupDirectSubscription();
+  cleanupGroupSubscription();
   state.authUser = session?.user || null;
   if (state.authUser) {
     const accountName = authDisplayName(state.authUser);
@@ -326,9 +342,12 @@ async function applySession(session) {
   state.currentProfile = state.authUser ? await loadMyProfile() : null;
   if (state.currentProfile) {
     await loadDirectData();
+    await loadGroupData();
     subscribeDirectMessages();
+    subscribeGroupMessages();
   } else {
     clearDirectData();
+    clearGroupData();
   }
   renderAccount();
   updateNameChangeUi();
@@ -342,6 +361,16 @@ function authDisplayName(user) {
     user?.user_metadata?.preferred_username ||
     user?.email?.split("@")[0] ||
     ""
+  ).slice(0, 32);
+}
+
+function fenegramDisplayName() {
+  return (
+    state.currentProfile?.display_name ||
+    el.name.value.trim() ||
+    authDisplayName(state.authUser) ||
+    state.currentProfile?.handle ||
+    "Аккаунт"
   ).slice(0, 32);
 }
 
@@ -372,7 +401,7 @@ function renderAccount() {
     el.handleStatus.textContent = "Сначала войди в аккаунт.";
     return;
   }
-  const name = authDisplayName(state.authUser) || "Аккаунт";
+  const name = fenegramDisplayName();
   const email = state.authUser.email || state.authUser.user_metadata?.email || "";
   const handle = state.currentProfile?.handle ? `@${state.currentProfile.handle}` : "нужен @ник";
   el.accountStatus.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(handle)}</span>${email ? `<span>${escapeHtml(email)}</span>` : ""}`;
@@ -413,6 +442,7 @@ async function signOut() {
   state.authUser = null;
   state.currentProfile = null;
   clearDirectData();
+  clearGroupData();
   renderAccount();
   disconnect();
   refreshAppAccess();
@@ -424,21 +454,29 @@ function canUseApp() {
 
 function refreshAppAccess() {
   const allowed = canUseApp();
+  const mainAllowed = canUseMainChannel();
   document.body.classList.toggle("locked", !allowed);
   el.authGate.hidden = allowed;
-  el.channelTab.disabled = !allowed;
+  el.channelTab.hidden = !mainAllowed;
+  el.channelTab.disabled = !mainAllowed;
   el.directTab.disabled = !allowed;
   el.systemTab.disabled = !allowed;
   el.voice.disabled = !allowed || state.voiceConnecting;
-  el.form.querySelector("button").disabled = !allowed || !state.joined;
-  el.message.disabled = !allowed || !state.joined;
+  el.form.querySelector("button").disabled = !mainAllowed || !state.joined;
+  el.message.disabled = !mainAllowed || !state.joined;
+  if (!mainAllowed && !el.channelView.hidden) showView("direct");
   renderAccount();
   renderDirectChatList();
+  renderGroupList();
   renderDirectChat();
 }
 
+function canUseMainChannel() {
+  return canUseApp() && state.currentProfile?.handle === "fenelesh";
+}
+
 function reconnectTextChatIfAllowed() {
-  if (!canUseApp()) {
+  if (!canUseMainChannel()) {
     disconnect();
     return;
   }
@@ -503,10 +541,14 @@ async function saveHandle(event) {
   el.settingsHandle.value = `@${data.handle}`;
   el.handleStatus.textContent = `@${data.handle} сохранен.`;
   renderAccount();
+  syncVoiceParticipants();
+  renderMembers();
   refreshAppAccess();
   await loadDirectData();
+  await loadGroupData();
   subscribeDirectMessages();
-  if (!state.joined && !state.connecting) connect();
+  subscribeGroupMessages();
+  if (canUseMainChannel() && !state.joined && !state.connecting) connect();
 }
 
 function normalizeHandle(value) {
@@ -570,9 +612,12 @@ function hideUserMenu() {
 function openDirectChat(profile) {
   if (!profile) return;
   state.selectedDirectUserId = profile.id;
+  state.selectedGroupId = null;
+  state.selectedConversationType = "direct";
   state.directProfiles.set(profile.id, profile);
   showView("direct");
   renderDirectChatList();
+  renderGroupList();
   renderDirectChat();
 }
 
@@ -581,8 +626,20 @@ function clearDirectData() {
   state.directProfiles.clear();
   state.directMessagesStore = [];
   state.selectedDirectUserId = null;
+  if (state.selectedConversationType === "direct") state.selectedConversationType = null;
   state.blockedUsers.clear();
   renderDirectChatList();
+  renderDirectChat();
+}
+
+function clearGroupData() {
+  cleanupGroupSubscription();
+  state.groups.clear();
+  state.groupMemberships.clear();
+  state.groupMessagesStore = [];
+  state.selectedGroupId = null;
+  if (state.selectedConversationType === "group") state.selectedConversationType = null;
+  renderGroupList();
   renderDirectChat();
 }
 
@@ -592,6 +649,52 @@ async function loadDirectData() {
   await loadStoredDirectMessages();
   renderDirectChatList();
   renderDirectChat();
+}
+
+async function loadGroupData() {
+  if (!state.authClient || !state.currentProfile) return;
+  await loadMyGroups();
+  await loadStoredGroupMessages();
+  renderGroupList();
+  renderDirectChat();
+}
+
+async function loadMyGroups() {
+  const { data, error } = await state.authClient
+    .from("group_members")
+    .select("group_id, role, groups(id, name, owner_id, created_at, updated_at)")
+    .eq("user_id", state.currentProfile.id);
+  if (error) {
+    addSystem(`Не удалось загрузить группы: ${error.message}`);
+    return;
+  }
+  state.groups.clear();
+  state.groupMemberships.clear();
+  for (const row of data || []) {
+    const group = row.groups;
+    if (!group?.id) continue;
+    state.groups.set(group.id, group);
+    state.groupMemberships.set(group.id, row.role || "member");
+  }
+}
+
+async function loadStoredGroupMessages() {
+  const groupIds = [...state.groups.keys()];
+  state.groupMessagesStore = [];
+  if (!groupIds.length) return;
+  const { data, error } = await state.authClient
+    .from("group_messages")
+    .select("id, group_id, sender_id, content, created_at")
+    .in("group_id", groupIds)
+    .order("created_at", { ascending: true })
+    .limit(500);
+  if (error) {
+    addSystem(`Не удалось загрузить сообщения групп: ${error.message}`);
+    return;
+  }
+  state.groupMessagesStore = data || [];
+  const ids = [...new Set(state.groupMessagesStore.map((message) => message.sender_id))];
+  await loadProfilesByIds(ids);
 }
 
 async function loadBlockedUsers() {
@@ -663,6 +766,23 @@ function cleanupDirectSubscription() {
   state.directChannel = null;
 }
 
+function subscribeGroupMessages() {
+  cleanupGroupSubscription();
+  if (!state.authClient || !state.currentProfile) return;
+  state.groupChannel = state.authClient
+    .channel(`groups-${state.currentProfile.id}`)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "group_messages" }, handleRealtimeGroupMessage)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "group_members", filter: `user_id=eq.${state.currentProfile.id}` }, handleRealtimeGroupMember)
+    .subscribe();
+}
+
+function cleanupGroupSubscription() {
+  if (state.groupChannel && state.authClient) {
+    state.authClient.removeChannel(state.groupChannel).catch(() => {});
+  }
+  state.groupChannel = null;
+}
+
 async function handleRealtimeDirectMessage(payload) {
   const message = payload.new;
   if (!message || state.directMessagesStore.some((item) => item.id === message.id)) return;
@@ -671,6 +791,20 @@ async function handleRealtimeDirectMessage(payload) {
   await loadProfilesByIds([otherId]);
   renderDirectChatList();
   if (state.selectedDirectUserId === otherId) renderDirectChat();
+}
+
+async function handleRealtimeGroupMessage(payload) {
+  const message = payload.new;
+  if (!message || !state.groups.has(message.group_id)) return;
+  if (state.groupMessagesStore.some((item) => item.id === message.id)) return;
+  state.groupMessagesStore.push(message);
+  await loadProfilesByIds([message.sender_id]);
+  renderGroupList();
+  if (state.selectedConversationType === "group" && state.selectedGroupId === message.group_id) renderDirectChat();
+}
+
+async function handleRealtimeGroupMember() {
+  await loadGroupData();
 }
 
 function otherDirectUserId(message) {
@@ -714,7 +848,7 @@ function showView(view) {
   el.settingsTab.classList.toggle("active", settings);
 }
 
-function saveUserSettings() {
+async function saveUserSettings() {
   const nickname = el.name.value.trim();
   const appId = DEFAULT_APP_ID;
   const oldName = localStorage.getItem("pm.name") || "";
@@ -739,15 +873,37 @@ function saveUserSettings() {
     localStorage.setItem("pm.nameChangedAt", String(Date.now()));
   }
   persistSettings();
+  if (state.currentProfile && nickname !== state.currentProfile.display_name) {
+    await updateCurrentProfileDisplayName(nickname);
+  }
   el.unlockAppId.checked = false;
   el.appId.disabled = true;
   el.unlockAppId.disabled = true;
   updateNameChangeUi();
+  renderAccount();
+  syncVoiceParticipants();
+  renderMembers();
   setDeviceTestStatus("Настройки сохранены.");
 
   if (nickname !== oldName || appId !== oldAppId || el.region.value !== oldRegion) {
     reconnectTextChat();
   }
+}
+
+async function updateCurrentProfileDisplayName(displayName) {
+  if (!state.authClient || !state.currentProfile || !displayName) return;
+  const { data, error } = await state.authClient
+    .from("profiles")
+    .update({ display_name: displayName.slice(0, 32), updated_at: new Date().toISOString() })
+    .eq("id", state.currentProfile.id)
+    .select("id, handle, display_name, created_at, updated_at")
+    .single();
+  if (error) {
+    setDeviceTestStatus(`Не удалось обновить имя аккаунта: ${error.message}`);
+    return;
+  }
+  state.currentProfile = data;
+  state.directProfiles.set(data.id, data);
 }
 
 function canChangeName() {
@@ -775,7 +931,7 @@ function reconnectTextChat() {
 }
 
 function connect() {
-  if (!canUseApp()) {
+  if (!canUseMainChannel()) {
     setStatus("нужен вход и @ник");
     return;
   }
@@ -898,7 +1054,7 @@ function sendMessage(event) {
   event.preventDefault();
   const text = el.message.value.trim();
   if (!text) return;
-  if (!canUseApp()) {
+  if (!canUseMainChannel()) {
     addSystem("Сначала войди в аккаунт и выбери @ник.");
     return;
   }
@@ -947,6 +1103,10 @@ function profileFromActor(actor) {
 async function sendDirectMessage(event) {
   event.preventDefault();
   const text = el.directMessage.value.trim();
+  if (state.selectedConversationType === "group") {
+    await sendGroupMessage(text);
+    return;
+  }
   const recipientId = state.selectedDirectUserId;
   if (!text || !recipientId || !state.authClient || !state.currentProfile) return;
   if (state.blockedUsers.has(recipientId)) {
@@ -963,6 +1123,30 @@ async function sendDirectMessage(event) {
   }
   el.directMessage.value = "";
   renderDirectChatList();
+  renderDirectChat();
+}
+
+async function sendGroupMessage(text) {
+  const groupId = state.selectedGroupId;
+  if (!text || !groupId || !state.authClient || !state.currentProfile) return;
+  const { data, error } = await state.authClient
+    .from("group_messages")
+    .insert({
+      group_id: groupId,
+      sender_id: state.currentProfile.id,
+      content: text.slice(0, 4000),
+    })
+    .select("id, group_id, sender_id, content, created_at")
+    .single();
+  if (error) {
+    addSystem(`Не удалось отправить сообщение в группу: ${error.message}`);
+    return;
+  }
+  if (data && !state.groupMessagesStore.some((item) => item.id === data.id)) {
+    state.groupMessagesStore.push(data);
+  }
+  el.directMessage.value = "";
+  renderGroupList();
   renderDirectChat();
 }
 
@@ -1058,7 +1242,7 @@ function buildDirectConversations() {
 function createDirectProfileButton(profile, preview) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `direct-user-button${state.selectedDirectUserId === profile.id ? " active" : ""}`;
+  button.className = `direct-user-button${state.selectedConversationType === "direct" && state.selectedDirectUserId === profile.id ? " active" : ""}`;
   button.appendChild(createAvatar(profile));
   const textWrap = document.createElement("div");
   textWrap.className = "direct-user-text";
@@ -1072,13 +1256,154 @@ function createDirectProfileButton(profile, preview) {
   return button;
 }
 
+function openGroupChat(group) {
+  if (!group) return;
+  state.selectedGroupId = group.id;
+  state.selectedDirectUserId = null;
+  state.selectedConversationType = "group";
+  showView("direct");
+  renderDirectChatList();
+  renderGroupList();
+  renderDirectChat();
+}
+
+function renderGroupList() {
+  if (!el.groupList) return;
+  el.groupList.innerHTML = "";
+  if (!state.currentProfile) {
+    el.groupList.innerHTML = `<div class="empty-state">Войди и выбери @ник</div>`;
+    if (el.groupInviteForm) el.groupInviteForm.hidden = true;
+    return;
+  }
+  const groups = [...state.groups.values()].sort((a, b) => {
+    const lastA = lastGroupMessage(a.id)?.created_at || a.created_at || "";
+    const lastB = lastGroupMessage(b.id)?.created_at || b.created_at || "";
+    return new Date(lastB) - new Date(lastA);
+  });
+  if (!groups.length) {
+    el.groupList.innerHTML = `<div class="empty-state">Пока нет групп</div>`;
+    if (el.groupInviteForm) el.groupInviteForm.hidden = true;
+    return;
+  }
+  for (const group of groups) el.groupList.appendChild(createGroupButton(group));
+  if (el.groupInviteForm) {
+    const selectedGroup = state.groups.get(state.selectedGroupId);
+    el.groupInviteForm.hidden = !(selectedGroup && selectedGroup.owner_id === state.currentProfile.id);
+  }
+}
+
+function createGroupButton(group) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `direct-user-button${state.selectedConversationType === "group" && state.selectedGroupId === group.id ? " active" : ""}`;
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  avatar.textContent = groupInitials(group.name);
+  const textWrap = document.createElement("div");
+  textWrap.className = "direct-user-text";
+  const name = document.createElement("span");
+  name.textContent = group.name;
+  const small = document.createElement("small");
+  small.textContent = lastGroupMessage(group.id)?.content || "группа";
+  textWrap.append(name, small);
+  button.append(avatar, textWrap);
+  button.addEventListener("click", () => openGroupChat(group));
+  return button;
+}
+
+function lastGroupMessage(groupId) {
+  return state.groupMessagesStore
+    .filter((message) => message.group_id === groupId)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+}
+
+function groupInitials(name) {
+  return String(name || "G")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+async function createGroup(event) {
+  event.preventDefault();
+  if (!state.authClient || !state.currentProfile) return;
+  const name = el.groupName.value.trim().slice(0, 40);
+  if (name.length < 2) {
+    addSystem("Название группы должно быть минимум 2 символа.");
+    return;
+  }
+  const { data: group, error } = await state.authClient
+    .from("groups")
+    .insert({ owner_id: state.currentProfile.id, name })
+    .select("id, name, owner_id, created_at, updated_at")
+    .single();
+  if (error) {
+    addSystem(`Не удалось создать группу: ${error.message}`);
+    return;
+  }
+  const { error: memberError } = await state.authClient.from("group_members").insert({
+    group_id: group.id,
+    user_id: state.currentProfile.id,
+    role: "owner",
+  });
+  if (memberError) addSystem(`Группа создана, но участник не добавился: ${memberError.message}`);
+  state.groups.set(group.id, group);
+  state.groupMemberships.set(group.id, "owner");
+  el.groupName.value = "";
+  openGroupChat(group);
+}
+
+async function inviteUserToGroup(event) {
+  event.preventDefault();
+  const group = state.groups.get(state.selectedGroupId);
+  if (!group || group.owner_id !== state.currentProfile?.id || !state.authClient) return;
+  const handle = normalizeHandle(el.groupInvite.value);
+  if (!HANDLE_PATTERN.test(handle)) {
+    addSystem("Введи @ник участника от 3 символов.");
+    return;
+  }
+  const { data: profile, error: profileError } = await state.authClient
+    .from("profiles")
+    .select("id, handle, display_name")
+    .eq("handle", handle)
+    .maybeSingle();
+  if (profileError) {
+    addSystem(`Не удалось найти пользователя: ${profileError.message}`);
+    return;
+  }
+  if (!profile) {
+    addSystem("Пользователь с таким @ником не найден.");
+    return;
+  }
+  const { error } = await state.authClient.from("group_members").upsert(
+    { group_id: group.id, user_id: profile.id, role: "member" },
+    { onConflict: "group_id,user_id" }
+  );
+  if (error) {
+    addSystem(`Не удалось добавить в группу: ${error.message}`);
+    return;
+  }
+  state.directProfiles.set(profile.id, profile);
+  el.groupInvite.value = "";
+  addSystem(`${displayProfile(profile)} добавлен в группу ${group.name}.`);
+}
+
 function renderDirectChat() {
   el.directMessages.innerHTML = "";
+  if (state.selectedConversationType === "group") {
+    renderSelectedGroupChat();
+    return;
+  }
   const profile = state.directProfiles.get(state.selectedDirectUserId);
   const blocked = state.selectedDirectUserId && state.blockedUsers.has(state.selectedDirectUserId);
   const enabled = Boolean(profile && state.currentProfile && !blocked);
   el.directMessage.disabled = !enabled;
   el.directForm.querySelector("button").disabled = !enabled;
+  el.directMessage.placeholder = "Написать личное сообщение";
+  el.blockDirect.hidden = false;
   el.blockDirect.disabled = !profile;
   el.blockDirect.textContent = blocked ? "Разблокировать" : "Заблокировать";
   el.directStatus.textContent = profile
@@ -1089,6 +1414,28 @@ function renderDirectChat() {
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
     addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile);
+  }
+  el.directMessages.scrollTop = el.directMessages.scrollHeight;
+}
+
+function renderSelectedGroupChat() {
+  const group = state.groups.get(state.selectedGroupId);
+  const enabled = Boolean(group && state.currentProfile);
+  el.directMessage.disabled = !enabled;
+  el.directForm.querySelector("button").disabled = !enabled;
+  el.directMessage.placeholder = enabled ? `Написать в ${group.name}` : "Выбери группу";
+  el.blockDirect.hidden = true;
+  if (!group) {
+    el.directStatus.textContent = "Выбери группу слева или создай новую";
+    return;
+  }
+  const role = state.groupMemberships.get(group.id) || "member";
+  el.directStatus.textContent = `${group.name} · чат и голос группы${role === "owner" ? " · ты владелец" : ""}`;
+  const messages = state.groupMessagesStore.filter((message) => message.group_id === group.id);
+  for (const message of messages) {
+    const own = message.sender_id === state.currentProfile.id;
+    const profile = own ? state.currentProfile : state.directProfiles.get(message.sender_id);
+    addMessage(own ? fenegramDisplayName() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile);
   }
   el.directMessages.scrollTop = el.directMessages.scrollHeight;
 }
@@ -1155,9 +1502,12 @@ async function startVoice() {
 
   const nickname = el.name.value.trim();
   const identity = `user-${crypto.randomUUID().slice(0, 8)}`;
+  const voiceRoom = currentVoiceRoom();
+  state.voiceRoomName = voiceRoom.name;
+  state.voiceRoomLabel = voiceRoom.label;
   const tokenSource = window.LivekitClient.TokenSource.sandboxTokenServer(LIVEKIT_SANDBOX_ID);
   const credentials = await tokenSource.fetch({
-    roomName: ROOM_NAME,
+    roomName: voiceRoom.name,
     participantIdentity: identity,
     participantName: nickname,
   });
@@ -1189,6 +1539,14 @@ async function startVoice() {
   await refreshDevices();
   renderMembers();
   addSystem("Голос включен через LiveKit.");
+}
+
+function currentVoiceRoom() {
+  const group = state.groups.get(state.selectedGroupId);
+  if (state.selectedConversationType === "group" && group) {
+    return { name: `group-${group.id}`, label: `группа ${group.name}` };
+  }
+  return { name: ROOM_NAME, label: "главный канал" };
 }
 
 function bindLiveKitEvents(room) {
@@ -1328,6 +1686,8 @@ function cleanupVoice() {
   state.micGain = null;
   state.analyser = null;
   state.livekitRoom = null;
+  state.voiceRoomName = ROOM_NAME;
+  state.voiceRoomLabel = "Главный канал";
   updateVoiceControls();
   renderMembers();
 }
@@ -1446,7 +1806,7 @@ function updateVoiceControls() {
   } else if (state.micMuted) {
     el.voiceStatus.textContent = "Микрофон выключен";
   } else {
-    el.voiceStatus.textContent = "В голосовом канале";
+    el.voiceStatus.textContent = `В голосовом канале: ${state.voiceRoomLabel}`;
   }
 }
 
@@ -1814,7 +2174,7 @@ function syncVoiceParticipants() {
   const room = state.livekitRoom;
   if (!room) return;
   state.voiceParticipants.clear();
-  state.voiceParticipants.set(room.localParticipant.identity, participantName(room.localParticipant));
+  state.voiceParticipants.set(room.localParticipant.identity, fenegramDisplayName());
   for (const participant of room.remoteParticipants.values()) {
     state.voiceParticipants.set(participant.identity, participantName(participant));
   }
@@ -1876,6 +2236,7 @@ function voiceLabel(name, isLocal) {
 }
 
 function participantName(participant) {
+  if (isLocalLiveKitParticipant(participant)) return fenegramDisplayName();
   return participant.name || participant.identity || "Участник";
 }
 
@@ -1888,8 +2249,8 @@ function myActorNr() {
 }
 
 function setConnectedUi(connected) {
-  el.message.disabled = !connected || !canUseApp();
-  el.form.querySelector("button").disabled = !connected || !canUseApp();
+  el.message.disabled = !connected || !canUseMainChannel();
+  el.form.querySelector("button").disabled = !connected || !canUseMainChannel();
   el.badge.textContent = connected ? "online" : "offline";
   el.badge.classList.toggle("online", connected);
   updateVoiceControls();
