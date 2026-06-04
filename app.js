@@ -114,6 +114,7 @@ const el = {
   openAuthSettings: document.querySelector("#openAuthSettingsBtn"),
   handleForm: document.querySelector("#handleForm"),
   handleInput: document.querySelector("#handleInput"),
+  saveHandle: document.querySelector("#saveHandleBtn"),
   handleStatus: document.querySelector("#handleStatus"),
   settingsHandle: document.querySelector("#settingsHandleInput"),
   saveSettingsHandle: document.querySelector("#saveSettingsHandleBtn"),
@@ -328,22 +329,29 @@ function authDisplayName(user) {
 
 function renderAccount() {
   const configured = Boolean(state.authClient);
+  const signedIn = Boolean(state.authUser);
   el.googleLogin.disabled = !configured;
   el.vkLogin.disabled = !configured;
   el.gateGoogleLogin.disabled = !configured;
   el.gateVkLogin.disabled = !configured;
   el.logout.hidden = !state.authUser;
   el.gateLogout.hidden = !state.authUser;
+  el.handleInput.disabled = !signedIn;
+  el.saveHandle.disabled = !signedIn;
+  el.settingsHandle.disabled = !signedIn;
+  el.saveSettingsHandle.disabled = !signedIn;
   if (!configured) {
     el.accountStatus.textContent = "Вход не настроен";
     el.authSettingsStatus.textContent = "Для Google/VK входа вставь URL и anon key из Supabase.";
-    el.authGateStatus.textContent = "Сначала настрой Supabase в настройках входа.";
+    el.authGateStatus.textContent = "Сначала нажми «Настроить вход» и вставь Supabase URL + anon key.";
+    el.handleStatus.textContent = "Ник можно выбрать только после настройки входа и авторизации.";
     return;
   }
   if (!state.authUser) {
     el.accountStatus.textContent = "Можно войти через Google или VK";
     el.authSettingsStatus.textContent = "Supabase подключен. Не забудь разрешить redirect URL в Supabase Dashboard.";
     el.authGateStatus.textContent = "Войди через Google или VK, чтобы пользоваться Fenegram.";
+    el.handleStatus.textContent = "Сначала войди в аккаунт.";
     return;
   }
   const name = authDisplayName(state.authUser) || "Аккаунт";
@@ -356,6 +364,9 @@ function renderAccount() {
   el.authGateStatus.textContent = state.currentProfile ? "Готово." : "Выбери обязательный @ник, чтобы открыть Fenegram.";
   el.handleInput.value = state.currentProfile?.handle ? `@${state.currentProfile.handle}` : "";
   el.settingsHandle.value = state.currentProfile?.handle ? `@${state.currentProfile.handle}` : "";
+  el.handleStatus.textContent = state.currentProfile
+    ? `@${state.currentProfile.handle} выбран.`
+    : "Теперь можно выбрать @ник: латиница, цифры и нижнее подчеркивание.";
 }
 
 async function signInWithProvider(provider) {
