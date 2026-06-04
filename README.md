@@ -84,14 +84,14 @@ HTTPS обязателен: мобильные браузеры обычно н�
 
 Вход сделан через Supabase Auth, чтобы Fenegram оставался бесплатным и мог работать как обычный сайт на GitHub Pages.
 
+Supabase URL и anon key уже вшиты в Fenegram, чтобы все пользователи попадали в одну общую базу аккаунтов, `@ников` и личных сообщений.
+
 Что нужно в Supabase:
 
 1. Создать бесплатный проект Supabase.
-2. В `Project Settings -> API` взять `Project URL` и `anon public key`.
-3. В Fenegram открыть `Настройки -> Аккаунты Supabase`, вставить эти два значения и нажать `Сохранить вход`.
-4. В Supabase открыть `Authentication -> URL Configuration`.
-5. В `Site URL` поставить `https://edemablakimove-cloud.github.io/fenegram/`.
-6. В `Redirect URLs` добавить:
+2. В Supabase открыть `Authentication -> URL Configuration`.
+3. В `Site URL` поставить `https://edemablakimove-cloud.github.io/fenegram/`.
+4. В `Redirect URLs` добавить:
 
 ```text
 https://edemablakimove-cloud.github.io/fenegram/

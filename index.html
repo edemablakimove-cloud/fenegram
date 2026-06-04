@@ -184,8 +184,8 @@
                 <input id="appIdInput" autocomplete="off" placeholder="вставь App ID из Photon Dashboard" disabled />
               </label>
               <label class="check-label">
-                <input id="unlockAppIdInput" type="checkbox" />
-                Разрешить изменение Photon App ID
+                <input id="unlockAppIdInput" type="checkbox" disabled />
+                Единый Photon App ID вшит в Fenegram
               </label>
               <button id="saveSettingsBtn" class="primary">Сохранить настройки</button>
               <button id="connectionCheckBtn">Проверить соединение</button>
@@ -193,21 +193,21 @@
             </section>
 
             <section class="settings-section">
-              <div class="section-title">Аккаунты Supabase</div>
+              <div class="section-title">Сервер аккаунтов</div>
               <label>
                 Supabase URL
-                <input id="supabaseUrlInput" autocomplete="off" placeholder="https://project-id.supabase.co" />
+                <input id="supabaseUrlInput" autocomplete="off" placeholder="единый сервер Fenegram" disabled />
               </label>
               <label>
                 Supabase anon key
-                <input id="supabaseAnonKeyInput" autocomplete="off" placeholder="eyJ..." />
+                <input id="supabaseAnonKeyInput" autocomplete="off" placeholder="вшит в приложение" disabled />
               </label>
               <label>
                 VK provider id
                 <input id="vkProviderInput" autocomplete="off" placeholder="custom:vk" />
               </label>
-              <p id="authSettingsStatus" class="device-test-status">Для Google/VK входа вставь URL и anon key из Supabase.</p>
-              <button id="saveAuthSettingsBtn" class="primary" type="button">Сохранить вход</button>
+              <p id="authSettingsStatus" class="device-test-status">Fenegram использует один общий Supabase для аккаунтов и личных сообщений.</p>
+              <button id="saveAuthSettingsBtn" class="primary" type="button">Обновить подключение</button>
             </section>
 
             <section class="settings-section">

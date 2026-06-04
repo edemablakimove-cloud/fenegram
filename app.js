@@ -5,6 +5,8 @@ const EVENT_DIRECT_MESSAGE = 3;
 const EVENT_PROFILE = 4;
 const APP_VERSION = "0.2.0";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
+const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
 const NAME_CHANGE_INTERVAL = 24 * 60 * 60 * 1000;
 const CHAT_HISTORY_KEY = "pm.chatHistory";
@@ -143,7 +145,8 @@ el.directTab.addEventListener("click", () => showView("direct"));
 el.systemTab.addEventListener("click", () => showView("system"));
 el.settingsTab.addEventListener("click", () => showView("settings"));
 el.unlockAppId.addEventListener("change", () => {
-  el.appId.disabled = !el.unlockAppId.checked;
+  el.unlockAppId.checked = false;
+  el.appId.disabled = true;
 });
 el.saveSettings.addEventListener("click", saveUserSettings);
 el.voice.addEventListener("click", toggleVoice);
@@ -206,8 +209,17 @@ function loadSettings() {
   state.clientId = localStorage.getItem("pm.anonClientId") || crypto.randomUUID();
   localStorage.setItem("pm.anonClientId", state.clientId);
   el.appId.value = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
-  el.supabaseUrl.value = localStorage.getItem("pm.supabaseUrl") || "";
-  el.supabaseAnonKey.value = localStorage.getItem("pm.supabaseAnonKey") || "";
+  localStorage.removeItem("pm.appId");
+  el.appId.value = DEFAULT_APP_ID;
+  el.appId.disabled = true;
+  el.unlockAppId.checked = false;
+  el.unlockAppId.disabled = true;
+  localStorage.removeItem("pm.supabaseUrl");
+  localStorage.removeItem("pm.supabaseAnonKey");
+  el.supabaseUrl.value = DEFAULT_SUPABASE_URL;
+  el.supabaseAnonKey.value = DEFAULT_SUPABASE_ANON_KEY;
+  el.supabaseUrl.disabled = true;
+  el.supabaseAnonKey.disabled = true;
   el.vkProvider.value = localStorage.getItem("pm.vkProvider") || "custom:vk";
   let nickname = localStorage.getItem("pm.name");
   if (!nickname) {
@@ -223,7 +235,7 @@ function loadSettings() {
 }
 
 function persistSettings() {
-  localStorage.setItem("pm.appId", el.appId.value.trim());
+  localStorage.setItem("pm.appId", DEFAULT_APP_ID);
   localStorage.setItem("pm.name", el.name.value.trim());
   localStorage.setItem("pm.region", el.region.value);
   localStorage.setItem("pm.masterVolume", el.masterVolume.value);
@@ -238,18 +250,24 @@ function persistAudioSettings() {
 }
 
 function saveAuthSettings() {
-  localStorage.setItem("pm.supabaseUrl", el.supabaseUrl.value.trim());
-  localStorage.setItem("pm.supabaseAnonKey", el.supabaseAnonKey.value.trim());
+  el.supabaseUrl.value = DEFAULT_SUPABASE_URL;
+  el.supabaseAnonKey.value = DEFAULT_SUPABASE_ANON_KEY;
+  localStorage.removeItem("pm.supabaseUrl");
+  localStorage.removeItem("pm.supabaseAnonKey");
   localStorage.setItem("pm.vkProvider", el.vkProvider.value.trim() || "custom:vk");
-  el.authSettingsStatus.textContent = "Настройки входа сохранены. Сейчас обновлю подключение аккаунтов.";
+  el.authSettingsStatus.textContent = "Единый Supabase Fenegram подключен. Сейчас обновлю вход.";
   initAuth().then(() => {
     if (state.joined || state.connecting) reconnectTextChatIfAllowed();
   });
 }
 
 async function initAuth() {
-  const url = el.supabaseUrl.value.trim();
-  const anonKey = el.supabaseAnonKey.value.trim();
+  const url = DEFAULT_SUPABASE_URL;
+  const anonKey = DEFAULT_SUPABASE_ANON_KEY;
+  el.supabaseUrl.value = DEFAULT_SUPABASE_URL;
+  el.supabaseAnonKey.value = DEFAULT_SUPABASE_ANON_KEY;
+  el.supabaseUrl.disabled = true;
+  el.supabaseAnonKey.disabled = true;
   if (!url || !anonKey) {
     state.authClient = null;
     state.authUser = null;
@@ -342,9 +360,9 @@ function renderAccount() {
   el.saveSettingsHandle.disabled = !signedIn;
   if (!configured) {
     el.accountStatus.textContent = "Вход не настроен";
-    el.authSettingsStatus.textContent = "Для Google/VK входа вставь URL и anon key из Supabase.";
-    el.authGateStatus.textContent = "Сначала нажми «Настроить вход» и вставь Supabase URL + anon key.";
-    el.handleStatus.textContent = "Ник можно выбрать только после настройки входа и авторизации.";
+    el.authSettingsStatus.textContent = "Единый Supabase Fenegram вшит в приложение.";
+    el.authGateStatus.textContent = "Подключаю единый сервер аккаунтов Fenegram.";
+    el.handleStatus.textContent = "Ник можно выбрать после входа в аккаунт.";
     return;
   }
   if (!state.authUser) {
@@ -372,7 +390,7 @@ function renderAccount() {
 async function signInWithProvider(provider) {
   if (!state.authClient) {
     showView("settings");
-    el.authSettingsStatus.textContent = "Сначала вставь Supabase URL и anon key.";
+    el.authSettingsStatus.textContent = "Единый Supabase Fenegram пока не подключился. Обнови страницу и попробуй снова.";
     return;
   }
   const redirectTo = `${window.location.origin}${window.location.pathname}`;
@@ -698,9 +716,9 @@ function showView(view) {
 
 function saveUserSettings() {
   const nickname = el.name.value.trim();
-  const appId = el.appId.value.trim();
+  const appId = DEFAULT_APP_ID;
   const oldName = localStorage.getItem("pm.name") || "";
-  const oldAppId = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
+  const oldAppId = DEFAULT_APP_ID;
   const oldRegion = localStorage.getItem("pm.region") || "EU";
 
   if (!nickname) {
@@ -723,6 +741,7 @@ function saveUserSettings() {
   persistSettings();
   el.unlockAppId.checked = false;
   el.appId.disabled = true;
+  el.unlockAppId.disabled = true;
   updateNameChangeUi();
   setDeviceTestStatus("Настройки сохранены.");
 
