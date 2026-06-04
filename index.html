@@ -101,40 +101,52 @@
         </section>
 
         <section id="directView" class="view" hidden>
-          <header class="topbar">
+          <header class="topbar conversation-topbar">
             <div>
               <h2>Личные сообщения и группы</h2>
-              <p id="directStatus">Выбери чат, группу или найди человека по @нику</p>
+              <p id="directStatus">Выбери чат справа или начни новый разговор</p>
             </div>
-            <button id="blockDirectBtn" type="button" disabled>Заблокировать</button>
+            <div class="conversation-actions">
+              <div class="conversation-tabs" role="tablist" aria-label="Разделы общения">
+                <button id="directModeBtn" class="active" type="button">Личные сообщения</button>
+                <button id="groupModeBtn" type="button">Группы</button>
+              </div>
+              <button id="blockDirectBtn" type="button" disabled>Заблокировать</button>
+            </div>
           </header>
           <section class="direct-layout">
-            <aside class="direct-sidebar">
-              <form id="directSearchForm" class="direct-search">
-                <input id="directSearchInput" autocomplete="off" placeholder="@ник пользователя" />
-                <button class="primary" type="submit">Найти</button>
-              </form>
-              <div id="directSearchResults" class="direct-search-results"></div>
-              <div class="section-title">Чаты</div>
-              <div id="directChatList"></div>
-              <div class="section-title">Группы</div>
-              <form id="groupCreateForm" class="group-create-form">
-                <input id="groupNameInput" autocomplete="off" maxlength="40" placeholder="Название группы" />
-                <button class="primary" type="submit">Создать</button>
-              </form>
-              <div id="groupList"></div>
-              <form id="groupInviteForm" class="group-invite-form" hidden>
-                <input id="groupInviteInput" autocomplete="off" placeholder="@ник для добавления" />
-                <button type="submit">Добавить</button>
-              </form>
-            </aside>
             <div class="chat direct-chat">
+              <div id="conversationEmpty" class="conversation-empty">
+                <h3>Выбери разговор</h3>
+                <p>Можно найти пользователя по @нику или создать группу.</p>
+                <button id="conversationPrimaryAction" class="primary" type="button">Найти пользователя</button>
+              </div>
               <div id="directMessages" class="messages"></div>
               <form id="directMessageForm" class="composer">
                 <input id="directMessageInput" placeholder="Написать личное сообщение" autocomplete="off" disabled />
                 <button class="primary" type="submit" disabled>Отправить</button>
               </form>
             </div>
+            <aside class="direct-sidebar">
+              <section id="directPanel" class="conversation-panel">
+                <div class="section-title">Чаты</div>
+                <div id="directChatList"></div>
+                <button id="openDirectSearchBtn" type="button">Найти пользователя</button>
+                <div id="directSearchResults" class="direct-search-results"></div>
+              </section>
+              <section id="groupPanel" class="conversation-panel" hidden>
+                <div class="section-title">Группы</div>
+                <div id="groupList"></div>
+                <div class="side-actions">
+                  <button id="openGroupCreateBtn" class="primary" type="button">Создать группу</button>
+                  <button id="openGroupJoinBtn" type="button">Присоединиться</button>
+                </div>
+                <form id="groupInviteForm" class="group-invite-form" hidden>
+                  <input id="groupInviteInput" autocomplete="off" placeholder="@ник для добавления" />
+                  <button type="submit">Добавить</button>
+                </form>
+              </section>
+            </aside>
           </section>
         </section>
 
@@ -255,6 +267,26 @@
         </section>
       </section>
     </main>
+
+    <div id="conversationModal" class="modal-backdrop" hidden>
+      <section class="modal-card">
+        <button id="closeConversationModalBtn" class="modal-close" type="button" aria-label="Закрыть">×</button>
+        <h3 id="conversationModalTitle">Новый разговор</h3>
+        <p id="conversationModalText">Заполни поле ниже.</p>
+        <form id="directSearchForm" class="modal-form">
+          <input id="directSearchInput" autocomplete="off" placeholder="@ник пользователя" />
+          <button class="primary" type="submit">Найти</button>
+        </form>
+        <form id="groupCreateForm" class="modal-form" hidden>
+          <input id="groupNameInput" autocomplete="off" maxlength="40" placeholder="Название группы" />
+          <button class="primary" type="submit">Создать</button>
+        </form>
+        <form id="groupJoinForm" class="modal-form" hidden>
+          <input id="groupJoinInput" autocomplete="off" placeholder="ID группы" />
+          <button class="primary" type="submit">Войти</button>
+        </form>
+      </section>
+    </div>
 
     <div id="userMenu" class="user-menu" hidden>
       <div class="user-menu-head">

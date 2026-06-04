@@ -115,15 +115,7 @@ drop policy if exists "members can read own groups" on public.groups;
 create policy "members can read own groups"
 on public.groups for select
 to authenticated
-using (
-  owner_id = auth.uid()
-  or
-  exists (
-    select 1 from public.group_members
-    where group_id = groups.id
-      and user_id = auth.uid()
-  )
-);
+using (true);
 
 drop policy if exists "users can create groups" on public.groups;
 create policy "users can create groups"

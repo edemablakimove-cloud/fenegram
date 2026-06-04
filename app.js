@@ -58,6 +58,7 @@ const state = {
   groupChannel: null,
   voiceRoomName: ROOM_NAME,
   voiceRoomLabel: "Главный канал",
+  conversationPanel: "direct",
 };
 
 const el = {
@@ -135,8 +136,23 @@ const el = {
   groupCreateForm: document.querySelector("#groupCreateForm"),
   groupName: document.querySelector("#groupNameInput"),
   groupList: document.querySelector("#groupList"),
+  groupJoinForm: document.querySelector("#groupJoinForm"),
+  groupJoin: document.querySelector("#groupJoinInput"),
   groupInviteForm: document.querySelector("#groupInviteForm"),
   groupInvite: document.querySelector("#groupInviteInput"),
+  directMode: document.querySelector("#directModeBtn"),
+  groupMode: document.querySelector("#groupModeBtn"),
+  directPanel: document.querySelector("#directPanel"),
+  groupPanel: document.querySelector("#groupPanel"),
+  openDirectSearch: document.querySelector("#openDirectSearchBtn"),
+  openGroupCreate: document.querySelector("#openGroupCreateBtn"),
+  openGroupJoin: document.querySelector("#openGroupJoinBtn"),
+  conversationEmpty: document.querySelector("#conversationEmpty"),
+  conversationPrimaryAction: document.querySelector("#conversationPrimaryAction"),
+  conversationModal: document.querySelector("#conversationModal"),
+  closeConversationModal: document.querySelector("#closeConversationModalBtn"),
+  conversationModalTitle: document.querySelector("#conversationModalTitle"),
+  conversationModalText: document.querySelector("#conversationModalText"),
   blockDirect: document.querySelector("#blockDirectBtn"),
   userMenu: document.querySelector("#userMenu"),
   userMenuAvatar: document.querySelector("#userMenuAvatar"),
@@ -196,7 +212,20 @@ el.handleForm.addEventListener("submit", saveHandle);
 el.saveSettingsHandle.addEventListener("click", saveHandle);
 el.directSearchForm.addEventListener("submit", searchDirectUser);
 el.groupCreateForm.addEventListener("submit", createGroup);
+el.groupJoinForm.addEventListener("submit", joinGroupById);
 el.groupInviteForm.addEventListener("submit", inviteUserToGroup);
+el.directMode.addEventListener("click", () => showConversationPanel("direct"));
+el.groupMode.addEventListener("click", () => showConversationPanel("group"));
+el.openDirectSearch.addEventListener("click", () => openConversationModal("direct-search"));
+el.openGroupCreate.addEventListener("click", () => openConversationModal("group-create"));
+el.openGroupJoin.addEventListener("click", () => openConversationModal("group-join"));
+el.conversationPrimaryAction.addEventListener("click", () => {
+  openConversationModal(state.conversationPanel === "group" ? "group-create" : "direct-search");
+});
+el.closeConversationModal.addEventListener("click", closeConversationModal);
+el.conversationModal.addEventListener("click", (event) => {
+  if (event.target === el.conversationModal) closeConversationModal();
+});
 el.blockDirect.addEventListener("click", toggleDirectBlock);
 el.userMenuMessage.addEventListener("click", () => {
   const profile = state.directProfiles.get(el.userMenu.dataset.userId);
@@ -377,8 +406,10 @@ function fenegramDisplayName() {
 function renderAccount() {
   const configured = Boolean(state.authClient);
   const signedIn = Boolean(state.authUser);
-  el.googleLogin.disabled = !configured;
-  el.vkLogin.disabled = !configured;
+  el.googleLogin.hidden = signedIn;
+  el.vkLogin.hidden = signedIn;
+  el.googleLogin.disabled = !configured || signedIn;
+  el.vkLogin.disabled = !configured || signedIn;
   el.gateGoogleLogin.disabled = !configured;
   el.gateVkLogin.disabled = !configured;
   el.logout.hidden = !state.authUser;
@@ -611,11 +642,13 @@ function hideUserMenu() {
 
 function openDirectChat(profile) {
   if (!profile) return;
+  state.conversationPanel = "direct";
   state.selectedDirectUserId = profile.id;
   state.selectedGroupId = null;
   state.selectedConversationType = "direct";
   state.directProfiles.set(profile.id, profile);
   showView("direct");
+  showConversationPanel("direct");
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
@@ -1206,6 +1239,7 @@ async function searchDirectUser(event) {
   state.directProfiles.set(data.id, data);
   const button = createDirectProfileButton(data, "Начать чат");
   el.directSearchResults.appendChild(button);
+  closeConversationModal();
 }
 
 function renderDirectChatList() {
@@ -1258,13 +1292,59 @@ function createDirectProfileButton(profile, preview) {
 
 function openGroupChat(group) {
   if (!group) return;
+  state.conversationPanel = "group";
   state.selectedGroupId = group.id;
   state.selectedDirectUserId = null;
   state.selectedConversationType = "group";
   showView("direct");
+  showConversationPanel("group");
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
+}
+
+function showConversationPanel(panel) {
+  state.conversationPanel = panel;
+  el.directPanel.hidden = panel !== "direct";
+  el.groupPanel.hidden = panel !== "group";
+  el.directMode.classList.toggle("active", panel === "direct");
+  el.groupMode.classList.toggle("active", panel === "group");
+  if (panel === "direct" && state.selectedConversationType === "group") {
+    state.selectedConversationType = null;
+    state.selectedGroupId = null;
+  }
+  if (panel === "group" && state.selectedConversationType === "direct") {
+    state.selectedConversationType = null;
+    state.selectedDirectUserId = null;
+  }
+  renderDirectChatList();
+  renderGroupList();
+  renderDirectChat();
+}
+
+function openConversationModal(mode) {
+  const isDirect = mode === "direct-search";
+  const isCreate = mode === "group-create";
+  const isJoin = mode === "group-join";
+  el.conversationModalTitle.textContent = isDirect ? "Найти пользователя" : isCreate ? "Создать группу" : "Присоединиться к группе";
+  el.conversationModalText.textContent = isDirect
+    ? "Введи @ник пользователя, чтобы открыть личный чат."
+    : isCreate
+      ? "Введи название группы. После создания в настройках группы можно добавить людей."
+      : "Введи ID группы, который тебе отправил владелец.";
+  el.directSearchForm.hidden = !isDirect;
+  el.groupCreateForm.hidden = !isCreate;
+  el.groupJoinForm.hidden = !isJoin;
+  el.conversationModal.hidden = false;
+  window.setTimeout(() => {
+    if (isDirect) el.directSearch.focus();
+    if (isCreate) el.groupName.focus();
+    if (isJoin) el.groupJoin.focus();
+  }, 0);
+}
+
+function closeConversationModal() {
+  el.conversationModal.hidden = true;
 }
 
 function renderGroupList() {
@@ -1341,7 +1421,7 @@ async function createGroup(event) {
     .select("id, name, owner_id, created_at, updated_at")
     .single();
   if (error) {
-    addSystem(`Не удалось создать группу: ${error.message}`);
+    addSystem(`Не удалось создать группу: ${friendlyDatabaseError(error)}`);
     return;
   }
   const { error: memberError } = await state.authClient.from("group_members").insert({
@@ -1353,7 +1433,52 @@ async function createGroup(event) {
   state.groups.set(group.id, group);
   state.groupMemberships.set(group.id, "owner");
   el.groupName.value = "";
+  closeConversationModal();
   openGroupChat(group);
+}
+
+async function joinGroupById(event) {
+  event.preventDefault();
+  if (!state.authClient || !state.currentProfile) return;
+  const groupId = el.groupJoin.value.trim();
+  if (!/^[0-9a-f-]{36}$/i.test(groupId)) {
+    addSystem("ID группы выглядит неверно. Скопируй полный ID группы.");
+    return;
+  }
+  const { data: group, error: groupError } = await state.authClient
+    .from("groups")
+    .select("id, name, owner_id, created_at, updated_at")
+    .eq("id", groupId)
+    .maybeSingle();
+  if (groupError) {
+    addSystem(`Не удалось найти группу: ${friendlyDatabaseError(groupError)}`);
+    return;
+  }
+  if (!group) {
+    addSystem("Группа не найдена или пока закрыта. Попроси владельца добавить тебя по @нику.");
+    return;
+  }
+  const { error } = await state.authClient.from("group_members").upsert(
+    { group_id: group.id, user_id: state.currentProfile.id, role: "member" },
+    { onConflict: "group_id,user_id" }
+  );
+  if (error) {
+    addSystem(`Не удалось присоединиться к группе: ${friendlyDatabaseError(error)}`);
+    return;
+  }
+  state.groups.set(group.id, group);
+  state.groupMemberships.set(group.id, "member");
+  el.groupJoin.value = "";
+  closeConversationModal();
+  openGroupChat(group);
+}
+
+function friendlyDatabaseError(error) {
+  const message = error?.message || String(error || "");
+  if (message.includes("Could not find the table") || message.includes("schema cache") || message.includes("relation")) {
+    return "в Supabase еще не выполнен свежий supabase-schema.sql с таблицами групп.";
+  }
+  return message;
 }
 
 async function inviteUserToGroup(event) {
@@ -1397,6 +1522,12 @@ function renderDirectChat() {
     renderSelectedGroupChat();
     return;
   }
+  if (!state.selectedConversationType && state.conversationPanel === "group") {
+    el.blockDirect.hidden = true;
+    el.directStatus.textContent = "Выбери группу справа или создай новую";
+    setConversationEmpty(true, "Выбери группу", "Создай новую группу или присоединись по ID.", "Создать группу");
+    return;
+  }
   const profile = state.directProfiles.get(state.selectedDirectUserId);
   const blocked = state.selectedDirectUserId && state.blockedUsers.has(state.selectedDirectUserId);
   const enabled = Boolean(profile && state.currentProfile && !blocked);
@@ -1408,7 +1539,8 @@ function renderDirectChat() {
   el.blockDirect.textContent = blocked ? "Разблокировать" : "Заблокировать";
   el.directStatus.textContent = profile
     ? `${displayProfile(profile)}${blocked ? " заблокирован" : ""}`
-    : "Выбери чат слева или найди человека по @нику";
+    : "Выбери чат справа или найди человека по @нику";
+  setConversationEmpty(!profile || !state.currentProfile, "Выбери личный чат", "Найди пользователя по @нику, чтобы начать переписку.", "Найти пользователя");
   if (!profile || !state.currentProfile) return;
   const messages = state.directMessagesStore.filter((message) => otherDirectUserId(message) === profile.id);
   for (const message of messages) {
@@ -1426,11 +1558,13 @@ function renderSelectedGroupChat() {
   el.directMessage.placeholder = enabled ? `Написать в ${group.name}` : "Выбери группу";
   el.blockDirect.hidden = true;
   if (!group) {
-    el.directStatus.textContent = "Выбери группу слева или создай новую";
+    el.directStatus.textContent = "Выбери группу справа или создай новую";
+    setConversationEmpty(true, "Выбери группу", "Создай новую группу или присоединись по ID.", "Создать группу");
     return;
   }
   const role = state.groupMemberships.get(group.id) || "member";
-  el.directStatus.textContent = `${group.name} · чат и голос группы${role === "owner" ? " · ты владелец" : ""}`;
+  el.directStatus.textContent = `${group.name} · ID: ${group.id}${role === "owner" ? " · ты владелец" : ""}`;
+  setConversationEmpty(false);
   const messages = state.groupMessagesStore.filter((message) => message.group_id === group.id);
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
@@ -1438,6 +1572,16 @@ function renderSelectedGroupChat() {
     addMessage(own ? fenegramDisplayName() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile);
   }
   el.directMessages.scrollTop = el.directMessages.scrollHeight;
+}
+
+function setConversationEmpty(visible, title = "", text = "", button = "") {
+  el.conversationEmpty.hidden = !visible;
+  el.directMessages.hidden = visible;
+  el.directForm.hidden = visible;
+  if (!visible) return;
+  el.conversationEmpty.querySelector("h3").textContent = title;
+  el.conversationEmpty.querySelector("p").textContent = text;
+  el.conversationPrimaryAction.textContent = button;
 }
 
 async function toggleDirectBlock() {

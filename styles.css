@@ -307,7 +307,7 @@ h2 {
 
 .direct-layout {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 300px;
   min-height: 0;
 }
 
@@ -316,9 +316,64 @@ h2 {
   align-content: start;
   gap: 12px;
   overflow: auto;
-  border-right: 1px solid var(--line);
+  border-left: 1px solid var(--line);
   background: #181b21;
   padding: 16px;
+}
+
+.conversation-topbar {
+  gap: 18px;
+}
+
+.conversation-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.conversation-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.conversation-tabs button {
+  min-height: 38px;
+}
+
+.conversation-tabs button.active {
+  border-color: rgba(47, 191, 143, 0.65);
+  background: rgba(47, 191, 143, 0.16);
+  color: var(--accent);
+}
+
+.conversation-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.conversation-panel[hidden] {
+  display: none;
+}
+
+.conversation-empty {
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  gap: 12px;
+  width: min(360px, calc(100% - 32px));
+  text-align: center;
+  color: var(--muted);
+}
+
+.conversation-empty h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+}
+
+.conversation-empty p {
+  margin: 0;
 }
 
 .direct-search {
@@ -351,6 +406,11 @@ h2 {
 
 .direct-chat {
   min-height: calc(100vh - 74px);
+}
+
+.side-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .empty-state {
@@ -478,6 +538,60 @@ h2 {
 .composer button {
   height: 40px;
   min-height: 40px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 13, 0.72);
+  padding: 18px;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.modal-card {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  width: min(480px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 22px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
+}
+
+.modal-card h3,
+.modal-card p {
+  margin: 0;
+}
+
+.modal-card p {
+  color: var(--muted);
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.modal-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.modal-form[hidden] {
+  display: none;
 }
 
 .members {
@@ -631,6 +745,16 @@ button.avatar {
     padding: 0 14px;
   }
 
+  .conversation-topbar,
+  .conversation-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .conversation-tabs {
+    grid-template-columns: 1fr;
+  }
+
   .content {
     display: flex;
     flex-direction: column;
@@ -650,8 +774,9 @@ button.avatar {
   }
 
   .direct-sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
   }
 
   .composer {
