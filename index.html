@@ -10,6 +10,33 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <section id="authGate" class="auth-gate">
+      <div class="auth-card">
+        <div class="brand gate-brand">
+          <div class="brand-mark">FG</div>
+          <div>
+            <h1>Fenegram</h1>
+            <p>вход нужен перед использованием</p>
+          </div>
+        </div>
+        <p id="authGateStatus" class="device-test-status">Войди через аккаунт, потом выбери свой @ник.</p>
+        <div class="account-actions">
+          <button id="gateGoogleLoginBtn" type="button">Войти через Google</button>
+          <button id="gateVkLoginBtn" type="button">Войти через VK</button>
+          <button id="gateLogoutBtn" type="button" hidden>Выйти из аккаунта</button>
+        </div>
+        <form id="handleForm" class="handle-form">
+          <label>
+            Твой @ник
+            <input id="handleInput" autocomplete="username" placeholder="@fenelesh" maxlength="24" />
+          </label>
+          <button id="saveHandleBtn" class="primary" type="submit">Сохранить @ник</button>
+        </form>
+        <p id="handleStatus" class="device-test-status">Можно использовать латинские буквы, цифры и нижнее подчеркивание.</p>
+        <button id="openAuthSettingsBtn" type="button">Настройки входа</button>
+      </div>
+    </section>
+
     <main class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -27,6 +54,16 @@
           <button id="systemTabBtn" class="nav-button">Система</button>
           <button id="settingsTabBtn" class="nav-button">Настройки</button>
         </nav>
+
+        <section class="panel account-panel">
+          <div class="section-title">Аккаунт</div>
+          <div id="accountStatus" class="account-status">Вход не настроен</div>
+          <div class="account-actions">
+            <button id="googleLoginBtn" type="button">Войти через Google</button>
+            <button id="vkLoginBtn" type="button">Войти через VK</button>
+            <button id="logoutBtn" type="button" hidden>Выйти из аккаунта</button>
+          </div>
+        </section>
 
         <section class="panel voice-panel">
           <div class="section-title">Голос</div>
@@ -77,21 +114,29 @@
           <header class="topbar">
             <div>
               <h2>Личные сообщения</h2>
-              <p id="directStatus">Выбери пользователя справа</p>
+              <p id="directStatus">Выбери чат слева или найди человека по @нику</p>
             </div>
+            <button id="blockDirectBtn" type="button" disabled>Заблокировать</button>
           </header>
-          <section class="content">
-            <div class="chat">
+          <section class="direct-layout">
+            <aside class="direct-sidebar">
+              <form id="directSearchForm" class="direct-search">
+                <input id="directSearchInput" autocomplete="off" placeholder="@ник пользователя" />
+                <button class="primary" type="submit">Найти</button>
+              </form>
+              <div id="directSearchResults" class="direct-search-results"></div>
+              <div class="section-title">Чаты</div>
+              <div id="directChatList"></div>
+              <div class="section-title">Группы</div>
+              <div class="empty-state">Группы подготовим следующим шагом</div>
+            </aside>
+            <div class="chat direct-chat">
               <div id="directMessages" class="messages"></div>
               <form id="directMessageForm" class="composer">
                 <input id="directMessageInput" placeholder="Написать личное сообщение" autocomplete="off" disabled />
                 <button class="primary" type="submit" disabled>Отправить</button>
               </form>
             </div>
-            <aside class="members">
-              <div class="section-title">Сейчас онлайн</div>
-              <div id="directUsersList"></div>
-            </aside>
           </section>
         </section>
 
@@ -122,6 +167,11 @@
               </label>
               <p id="nameChangeHint" class="device-test-status"></p>
               <label>
+                @ник аккаунта
+                <input id="settingsHandleInput" autocomplete="username" placeholder="@fenelesh" maxlength="24" />
+              </label>
+              <button id="saveSettingsHandleBtn" type="button">Сохранить @ник</button>
+              <label>
                 Сервер текста
                 <select id="regionInput">
                   <option value="EU">Европа</option>
@@ -140,6 +190,24 @@
               <button id="saveSettingsBtn" class="primary">Сохранить настройки</button>
               <button id="connectionCheckBtn">Проверить соединение</button>
               <p id="connectionCheckStatus" class="device-test-status">Проверка соединения не запущена</p>
+            </section>
+
+            <section class="settings-section">
+              <div class="section-title">Аккаунты Supabase</div>
+              <label>
+                Supabase URL
+                <input id="supabaseUrlInput" autocomplete="off" placeholder="https://project-id.supabase.co" />
+              </label>
+              <label>
+                Supabase anon key
+                <input id="supabaseAnonKeyInput" autocomplete="off" placeholder="eyJ..." />
+              </label>
+              <label>
+                VK provider id
+                <input id="vkProviderInput" autocomplete="off" placeholder="custom:vk" />
+              </label>
+              <p id="authSettingsStatus" class="device-test-status">Для Google/VK входа вставь URL и anon key из Supabase.</p>
+              <button id="saveAuthSettingsBtn" class="primary" type="button">Сохранить вход</button>
             </section>
 
             <section class="settings-section">
@@ -180,8 +248,21 @@
       </section>
     </main>
 
+    <div id="userMenu" class="user-menu" hidden>
+      <div class="user-menu-head">
+        <div id="userMenuAvatar" class="avatar">FG</div>
+        <div>
+          <strong id="userMenuName">Пользователь</strong>
+          <span id="userMenuHandle">@user</span>
+        </div>
+      </div>
+      <button id="userMenuMessageBtn" type="button">Открыть личку</button>
+      <button id="userMenuBlockBtn" type="button">Заблокировать</button>
+    </div>
+
     <script src="lib/photon-realtime-browser.js"></script>
     <script src="lib/livekit-client.umd.min.js"></script>
+    <script src="lib/supabase.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

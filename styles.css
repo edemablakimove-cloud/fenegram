@@ -22,6 +22,12 @@ body {
   font: 14px/1.4 "Segoe UI", Arial, sans-serif;
 }
 
+body.locked .app-shell {
+  filter: blur(2px);
+  pointer-events: none;
+  user-select: none;
+}
+
 button,
 input,
 select {
@@ -64,6 +70,40 @@ label {
   display: grid;
   gap: 6px;
   color: var(--muted);
+}
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 12, 16, 0.86);
+  padding: 18px;
+}
+
+.auth-gate[hidden] {
+  display: none;
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 18px;
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.35);
+}
+
+.gate-brand {
+  align-items: flex-start;
+}
+
+.handle-form {
+  display: grid;
+  gap: 10px;
 }
 
 .app-shell {
@@ -149,6 +189,28 @@ h2 {
 
 .voice-panel {
   margin-top: auto;
+}
+
+.account-panel {
+  gap: 10px;
+}
+
+.account-status {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.account-status strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.account-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .view {
@@ -245,6 +307,42 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
   min-height: 0;
+}
+
+.direct-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.direct-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: #181b21;
+  padding: 16px;
+}
+
+.direct-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+}
+
+.direct-search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.direct-chat {
+  min-height: calc(100vh - 74px);
+}
+
+.empty-state {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .chat {
@@ -397,12 +495,83 @@ h2 {
 .direct-user-button {
   width: 100%;
   text-align: left;
-  padding: 0 10px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 7px 10px;
 }
 
 .direct-user-button.active {
   border-color: rgba(47, 191, 143, 0.5);
   color: var(--accent);
+}
+
+.direct-user-button small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.direct-user-text {
+  display: grid;
+  min-width: 0;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(47, 191, 143, 0.18);
+  color: var(--accent);
+  font-weight: 800;
+  padding: 0;
+}
+
+button.avatar {
+  min-height: 30px;
+}
+
+.message-avatar {
+  flex: 0 0 auto;
+}
+
+.user-menu {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  gap: 8px;
+  width: 240px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+}
+
+.user-menu[hidden] {
+  display: none;
+}
+
+.user-menu-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.user-menu-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .speaking-dot {
@@ -421,7 +590,8 @@ h2 {
 
 @media (max-width: 860px) {
   .app-shell,
-  .content {
+  .content,
+  .direct-layout {
     grid-template-columns: 1fr;
   }
 
@@ -463,6 +633,11 @@ h2 {
 
   .members {
     order: -1;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .direct-sidebar {
+    border-right: 0;
     border-bottom: 1px solid var(--line);
   }
 

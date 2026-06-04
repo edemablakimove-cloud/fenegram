@@ -9,6 +9,7 @@ const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
 const NAME_CHANGE_INTERVAL = 24 * 60 * 60 * 1000;
 const CHAT_HISTORY_KEY = "pm.chatHistory";
 const CHAT_HISTORY_LIMIT = 100;
+const HANDLE_PATTERN = /^[a-z0-9_]{3,24}$/;
 
 const state = {
   client: null,
@@ -39,6 +40,14 @@ const state = {
   profiles: new Map(),
   directChats: new Map(),
   selectedDirectActor: null,
+  authClient: null,
+  authUser: null,
+  currentProfile: null,
+  directProfiles: new Map(),
+  directMessagesStore: [],
+  selectedDirectUserId: null,
+  blockedUsers: new Set(),
+  directChannel: null,
 };
 
 const el = {
@@ -88,6 +97,37 @@ const el = {
   videoQualityLabel: document.querySelector("#videoQualityLabel"),
   connectionCheck: document.querySelector("#connectionCheckBtn"),
   connectionCheckStatus: document.querySelector("#connectionCheckStatus"),
+  accountStatus: document.querySelector("#accountStatus"),
+  googleLogin: document.querySelector("#googleLoginBtn"),
+  vkLogin: document.querySelector("#vkLoginBtn"),
+  logout: document.querySelector("#logoutBtn"),
+  supabaseUrl: document.querySelector("#supabaseUrlInput"),
+  supabaseAnonKey: document.querySelector("#supabaseAnonKeyInput"),
+  vkProvider: document.querySelector("#vkProviderInput"),
+  saveAuthSettings: document.querySelector("#saveAuthSettingsBtn"),
+  authSettingsStatus: document.querySelector("#authSettingsStatus"),
+  authGate: document.querySelector("#authGate"),
+  authGateStatus: document.querySelector("#authGateStatus"),
+  gateGoogleLogin: document.querySelector("#gateGoogleLoginBtn"),
+  gateVkLogin: document.querySelector("#gateVkLoginBtn"),
+  gateLogout: document.querySelector("#gateLogoutBtn"),
+  openAuthSettings: document.querySelector("#openAuthSettingsBtn"),
+  handleForm: document.querySelector("#handleForm"),
+  handleInput: document.querySelector("#handleInput"),
+  handleStatus: document.querySelector("#handleStatus"),
+  settingsHandle: document.querySelector("#settingsHandleInput"),
+  saveSettingsHandle: document.querySelector("#saveSettingsHandleBtn"),
+  directSearchForm: document.querySelector("#directSearchForm"),
+  directSearch: document.querySelector("#directSearchInput"),
+  directSearchResults: document.querySelector("#directSearchResults"),
+  directChatList: document.querySelector("#directChatList"),
+  blockDirect: document.querySelector("#blockDirectBtn"),
+  userMenu: document.querySelector("#userMenu"),
+  userMenuAvatar: document.querySelector("#userMenuAvatar"),
+  userMenuName: document.querySelector("#userMenuName"),
+  userMenuHandle: document.querySelector("#userMenuHandle"),
+  userMenuMessage: document.querySelector("#userMenuMessageBtn"),
+  userMenuBlock: document.querySelector("#userMenuBlockBtn"),
 };
 
 loadSettings();
@@ -95,7 +135,7 @@ loadChatHistory();
 refreshDevices();
 setConnectedUi(false);
 updateNameChangeUi();
-window.setTimeout(connect, 100);
+startApp();
 
 el.channelTab.addEventListener("click", () => showView("channel"));
 el.directTab.addEventListener("click", () => showView("direct"));
@@ -127,11 +167,47 @@ el.testSpeaker.addEventListener("click", testSpeaker);
 el.micVolume.addEventListener("input", updateMicGain);
 el.masterVolume.addEventListener("input", updateAllVolumes);
 el.videoQuality.addEventListener("input", updateVideoQuality);
+el.googleLogin.addEventListener("click", () => signInWithProvider("google"));
+el.vkLogin.addEventListener("click", () => signInWithProvider(el.vkProvider.value.trim() || "custom:vk"));
+el.gateGoogleLogin.addEventListener("click", () => signInWithProvider("google"));
+el.gateVkLogin.addEventListener("click", () => signInWithProvider(el.vkProvider.value.trim() || "custom:vk"));
+el.gateLogout.addEventListener("click", signOut);
+el.logout.addEventListener("click", signOut);
+el.saveAuthSettings.addEventListener("click", saveAuthSettings);
+el.openAuthSettings.addEventListener("click", openAuthSettings);
+el.handleForm.addEventListener("submit", saveHandle);
+el.saveSettingsHandle.addEventListener("click", saveHandle);
+el.directSearchForm.addEventListener("submit", searchDirectUser);
+el.blockDirect.addEventListener("click", toggleDirectBlock);
+el.userMenuMessage.addEventListener("click", () => {
+  const profile = state.directProfiles.get(el.userMenu.dataset.userId);
+  if (profile) openDirectChat(profile);
+  hideUserMenu();
+});
+el.userMenuBlock.addEventListener("click", async () => {
+  const profile = state.directProfiles.get(el.userMenu.dataset.userId);
+  if (profile) await setDirectBlock(profile.id, !state.blockedUsers.has(profile.id));
+  hideUserMenu();
+});
+document.addEventListener("click", (event) => {
+  if (el.userMenu.hidden) return;
+  if (el.userMenu.contains(event.target) || event.target.closest(".avatar")) return;
+  hideUserMenu();
+});
+
+async function startApp() {
+  await initAuth();
+  refreshAppAccess();
+  if (canUseApp()) window.setTimeout(connect, 100);
+}
 
 function loadSettings() {
-  state.clientId = localStorage.getItem("pm.clientId") || crypto.randomUUID();
-  localStorage.setItem("pm.clientId", state.clientId);
+  state.clientId = localStorage.getItem("pm.anonClientId") || crypto.randomUUID();
+  localStorage.setItem("pm.anonClientId", state.clientId);
   el.appId.value = localStorage.getItem("pm.appId") || DEFAULT_APP_ID;
+  el.supabaseUrl.value = localStorage.getItem("pm.supabaseUrl") || "";
+  el.supabaseAnonKey.value = localStorage.getItem("pm.supabaseAnonKey") || "";
+  el.vkProvider.value = localStorage.getItem("pm.vkProvider") || "custom:vk";
   let nickname = localStorage.getItem("pm.name");
   if (!nickname) {
     nickname = `User${Math.floor(Math.random() * 1000)}`;
@@ -158,6 +234,418 @@ function persistAudioSettings() {
   localStorage.setItem("pm.masterVolume", el.masterVolume.value);
   localStorage.setItem("pm.micVolume", el.micVolume.value);
   localStorage.setItem("pm.videoQuality", el.videoQuality.value);
+}
+
+function saveAuthSettings() {
+  localStorage.setItem("pm.supabaseUrl", el.supabaseUrl.value.trim());
+  localStorage.setItem("pm.supabaseAnonKey", el.supabaseAnonKey.value.trim());
+  localStorage.setItem("pm.vkProvider", el.vkProvider.value.trim() || "custom:vk");
+  el.authSettingsStatus.textContent = "Настройки входа сохранены. Сейчас обновлю подключение аккаунтов.";
+  initAuth().then(() => {
+    if (state.joined || state.connecting) reconnectTextChatIfAllowed();
+  });
+}
+
+async function initAuth() {
+  const url = el.supabaseUrl.value.trim();
+  const anonKey = el.supabaseAnonKey.value.trim();
+  if (!url || !anonKey) {
+    state.authClient = null;
+    state.authUser = null;
+    state.currentProfile = null;
+    renderAccount();
+    return;
+  }
+  if (!window.supabase?.createClient) {
+    el.authSettingsStatus.textContent = "Библиотека Supabase не загрузилась.";
+    renderAccount();
+    return;
+  }
+  try {
+    state.authClient = window.supabase.createClient(url, anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
+    const { data, error } = await state.authClient.auth.getSession();
+    if (error) throw error;
+    await applySession(data.session);
+    state.authClient.auth.onAuthStateChange(async (_event, session) => {
+      const previousUserId = state.authUser?.id || "";
+      await applySession(session);
+      if ((state.authUser?.id || "") !== previousUserId && (state.joined || state.connecting)) {
+        reconnectTextChatIfAllowed();
+      }
+    });
+  } catch (error) {
+    state.authClient = null;
+    state.authUser = null;
+    state.currentProfile = null;
+    el.authSettingsStatus.textContent = `Не удалось подключить Supabase: ${error.message}`;
+    renderAccount();
+  }
+}
+
+async function applySession(session) {
+  cleanupDirectSubscription();
+  state.authUser = session?.user || null;
+  if (state.authUser) {
+    const accountName = authDisplayName(state.authUser);
+    state.clientId = `auth-${state.authUser.id}`;
+    localStorage.setItem("pm.clientId", state.clientId);
+    if (accountName && accountName !== el.name.value.trim()) {
+      el.name.value = accountName;
+      localStorage.setItem("pm.name", accountName);
+    }
+  } else {
+    state.clientId = localStorage.getItem("pm.anonClientId") || crypto.randomUUID();
+    localStorage.setItem("pm.anonClientId", state.clientId);
+    localStorage.setItem("pm.clientId", state.clientId);
+  }
+  state.currentProfile = state.authUser ? await loadMyProfile() : null;
+  if (state.currentProfile) {
+    await loadDirectData();
+    subscribeDirectMessages();
+  } else {
+    clearDirectData();
+  }
+  renderAccount();
+  updateNameChangeUi();
+  refreshAppAccess();
+}
+
+function authDisplayName(user) {
+  return (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.user_metadata?.preferred_username ||
+    user?.email?.split("@")[0] ||
+    ""
+  ).slice(0, 32);
+}
+
+function renderAccount() {
+  const configured = Boolean(state.authClient);
+  el.googleLogin.disabled = !configured;
+  el.vkLogin.disabled = !configured;
+  el.gateGoogleLogin.disabled = !configured;
+  el.gateVkLogin.disabled = !configured;
+  el.logout.hidden = !state.authUser;
+  el.gateLogout.hidden = !state.authUser;
+  if (!configured) {
+    el.accountStatus.textContent = "Вход не настроен";
+    el.authSettingsStatus.textContent = "Для Google/VK входа вставь URL и anon key из Supabase.";
+    el.authGateStatus.textContent = "Сначала настрой Supabase в настройках входа.";
+    return;
+  }
+  if (!state.authUser) {
+    el.accountStatus.textContent = "Можно войти через Google или VK";
+    el.authSettingsStatus.textContent = "Supabase подключен. Не забудь разрешить redirect URL в Supabase Dashboard.";
+    el.authGateStatus.textContent = "Войди через Google или VK, чтобы пользоваться Fenegram.";
+    return;
+  }
+  const name = authDisplayName(state.authUser) || "Аккаунт";
+  const email = state.authUser.email || state.authUser.user_metadata?.email || "";
+  const handle = state.currentProfile?.handle ? `@${state.currentProfile.handle}` : "нужен @ник";
+  el.accountStatus.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(handle)}</span>${email ? `<span>${escapeHtml(email)}</span>` : ""}`;
+  el.authSettingsStatus.textContent = state.currentProfile
+    ? "Ты вошел в аккаунт. Личные сообщения сохраняются между аккаунтами."
+    : "Ты вошел в аккаунт. Теперь выбери обязательный @ник.";
+  el.authGateStatus.textContent = state.currentProfile ? "Готово." : "Выбери обязательный @ник, чтобы открыть Fenegram.";
+  el.handleInput.value = state.currentProfile?.handle ? `@${state.currentProfile.handle}` : "";
+  el.settingsHandle.value = state.currentProfile?.handle ? `@${state.currentProfile.handle}` : "";
+}
+
+async function signInWithProvider(provider) {
+  if (!state.authClient) {
+    showView("settings");
+    el.authSettingsStatus.textContent = "Сначала вставь Supabase URL и anon key.";
+    return;
+  }
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const { error } = await state.authClient.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo,
+    },
+  });
+  if (error) addSystem(`Не удалось начать вход: ${error.message}`);
+}
+
+async function signOut() {
+  if (!state.authClient) return;
+  const { error } = await state.authClient.auth.signOut();
+  if (error) {
+    addSystem(`Не удалось выйти из аккаунта: ${error.message}`);
+    return;
+  }
+  state.authUser = null;
+  state.currentProfile = null;
+  clearDirectData();
+  renderAccount();
+  disconnect();
+  refreshAppAccess();
+}
+
+function canUseApp() {
+  return Boolean(state.authClient && state.authUser && state.currentProfile?.handle);
+}
+
+function refreshAppAccess() {
+  const allowed = canUseApp();
+  document.body.classList.toggle("locked", !allowed);
+  el.authGate.hidden = allowed;
+  el.channelTab.disabled = !allowed;
+  el.directTab.disabled = !allowed;
+  el.systemTab.disabled = !allowed;
+  el.voice.disabled = !allowed || state.voiceConnecting;
+  el.form.querySelector("button").disabled = !allowed || !state.joined;
+  el.message.disabled = !allowed || !state.joined;
+  renderAccount();
+  renderDirectChatList();
+  renderDirectChat();
+}
+
+function reconnectTextChatIfAllowed() {
+  if (!canUseApp()) {
+    disconnect();
+    return;
+  }
+  reconnectTextChat();
+}
+
+function openAuthSettings() {
+  showView("settings");
+  el.authGate.hidden = true;
+  document.body.classList.remove("locked");
+}
+
+async function loadMyProfile() {
+  if (!state.authClient || !state.authUser) return null;
+  const { data, error } = await state.authClient
+    .from("profiles")
+    .select("id, handle, display_name, created_at, updated_at")
+    .eq("id", state.authUser.id)
+    .maybeSingle();
+  if (error) {
+    el.handleStatus.textContent = `Не удалось загрузить профиль: ${error.message}`;
+    return null;
+  }
+  if (data?.display_name && data.display_name !== el.name.value.trim()) {
+    el.name.value = data.display_name;
+    localStorage.setItem("pm.name", data.display_name);
+  }
+  return data;
+}
+
+async function saveHandle(event) {
+  event?.preventDefault?.();
+  if (!state.authClient || !state.authUser) {
+    el.handleStatus.textContent = "Сначала войди в аккаунт.";
+    return;
+  }
+  const handle = normalizeHandle(el.handleInput.value || el.settingsHandle.value);
+  if (!HANDLE_PATTERN.test(handle)) {
+    el.handleStatus.textContent = "Ник должен быть 3-24 символа: латиница, цифры и нижнее подчеркивание.";
+    return;
+  }
+  const displayName = el.name.value.trim() || authDisplayName(state.authUser) || handle;
+  const { data, error } = await state.authClient
+    .from("profiles")
+    .upsert(
+      {
+        id: state.authUser.id,
+        handle,
+        display_name: displayName.slice(0, 32),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    )
+    .select("id, handle, display_name, created_at, updated_at")
+    .single();
+  if (error) {
+    el.handleStatus.textContent = error.code === "23505" ? "Этот @ник уже занят." : `Не удалось сохранить @ник: ${error.message}`;
+    return;
+  }
+  state.currentProfile = data;
+  el.handleInput.value = `@${data.handle}`;
+  el.settingsHandle.value = `@${data.handle}`;
+  el.handleStatus.textContent = `@${data.handle} сохранен.`;
+  renderAccount();
+  refreshAppAccess();
+  await loadDirectData();
+  subscribeDirectMessages();
+  if (!state.joined && !state.connecting) connect();
+}
+
+function normalizeHandle(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
+function displayProfile(profile) {
+  if (!profile) return "Неизвестный";
+  return profile.display_name ? `${profile.display_name} (@${profile.handle})` : `@${profile.handle}`;
+}
+
+function profileInitials(profile) {
+  const source = profile?.display_name || profile?.handle || "?";
+  return source
+    .replace(/^@/, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function createAvatar(profile, className = "") {
+  const avatar = document.createElement("button");
+  avatar.type = "button";
+  avatar.className = `avatar ${className}`.trim();
+  avatar.textContent = profileInitials(profile);
+  avatar.title = `Меню ${displayProfile(profile)}`;
+  avatar.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showUserMenu(profile, avatar);
+  });
+  return avatar;
+}
+
+function showUserMenu(profile, anchor) {
+  if (!profile || profile.id === state.currentProfile?.id) return;
+  state.directProfiles.set(profile.id, profile);
+  el.userMenu.dataset.userId = profile.id;
+  el.userMenuAvatar.textContent = profileInitials(profile);
+  el.userMenuName.textContent = profile.display_name || "Пользователь";
+  el.userMenuHandle.textContent = `@${profile.handle}`;
+  el.userMenuBlock.textContent = state.blockedUsers.has(profile.id) ? "Разблокировать" : "Заблокировать";
+  const rect = anchor.getBoundingClientRect();
+  const left = Math.min(rect.left, window.innerWidth - 252);
+  const top = Math.min(rect.bottom + 8, window.innerHeight - 180);
+  el.userMenu.style.left = `${Math.max(8, left)}px`;
+  el.userMenu.style.top = `${Math.max(8, top)}px`;
+  el.userMenu.hidden = false;
+}
+
+function hideUserMenu() {
+  el.userMenu.hidden = true;
+  delete el.userMenu.dataset.userId;
+}
+
+function openDirectChat(profile) {
+  if (!profile) return;
+  state.selectedDirectUserId = profile.id;
+  state.directProfiles.set(profile.id, profile);
+  showView("direct");
+  renderDirectChatList();
+  renderDirectChat();
+}
+
+function clearDirectData() {
+  cleanupDirectSubscription();
+  state.directProfiles.clear();
+  state.directMessagesStore = [];
+  state.selectedDirectUserId = null;
+  state.blockedUsers.clear();
+  renderDirectChatList();
+  renderDirectChat();
+}
+
+async function loadDirectData() {
+  if (!state.authClient || !state.currentProfile) return;
+  await loadBlockedUsers();
+  await loadStoredDirectMessages();
+  renderDirectChatList();
+  renderDirectChat();
+}
+
+async function loadBlockedUsers() {
+  const { data, error } = await state.authClient
+    .from("blocked_users")
+    .select("blocked_id")
+    .eq("blocker_id", state.currentProfile.id);
+  if (error) {
+    addSystem(`Не удалось загрузить блокировки: ${error.message}`);
+    return;
+  }
+  state.blockedUsers = new Set((data || []).map((row) => row.blocked_id));
+}
+
+async function loadStoredDirectMessages() {
+  const myId = state.currentProfile.id;
+  const { data, error } = await state.authClient
+    .from("direct_messages")
+    .select("id, sender_id, recipient_id, content, created_at")
+    .or(`sender_id.eq.${myId},recipient_id.eq.${myId}`)
+    .order("created_at", { ascending: true })
+    .limit(300);
+  if (error) {
+    addSystem(`Не удалось загрузить личные сообщения: ${error.message}`);
+    return;
+  }
+  state.directMessagesStore = data || [];
+  await loadDirectProfilesFromMessages();
+}
+
+async function loadDirectProfilesFromMessages() {
+  const myId = state.currentProfile?.id;
+  const ids = new Set();
+  for (const message of state.directMessagesStore) {
+    ids.add(message.sender_id);
+    ids.add(message.recipient_id);
+  }
+  ids.delete(myId);
+  if (!ids.size) return;
+  await loadProfilesByIds([...ids]);
+}
+
+async function loadProfilesByIds(ids) {
+  const missing = ids.filter((id) => id && !state.directProfiles.has(id) && id !== state.currentProfile?.id);
+  if (!missing.length) return;
+  const { data, error } = await state.authClient.from("profiles").select("id, handle, display_name").in("id", missing);
+  if (error) {
+    addSystem(`Не удалось загрузить профили: ${error.message}`);
+    return;
+  }
+  for (const profile of data || []) state.directProfiles.set(profile.id, profile);
+}
+
+function subscribeDirectMessages() {
+  cleanupDirectSubscription();
+  if (!state.authClient || !state.currentProfile) return;
+  const myId = state.currentProfile.id;
+  state.directChannel = state.authClient
+    .channel(`direct-${myId}`)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: `sender_id=eq.${myId}` }, handleRealtimeDirectMessage)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: `recipient_id=eq.${myId}` }, handleRealtimeDirectMessage)
+    .subscribe();
+}
+
+function cleanupDirectSubscription() {
+  if (state.directChannel && state.authClient) {
+    state.authClient.removeChannel(state.directChannel).catch(() => {});
+  }
+  state.directChannel = null;
+}
+
+async function handleRealtimeDirectMessage(payload) {
+  const message = payload.new;
+  if (!message || state.directMessagesStore.some((item) => item.id === message.id)) return;
+  state.directMessagesStore.push(message);
+  const otherId = otherDirectUserId(message);
+  await loadProfilesByIds([otherId]);
+  renderDirectChatList();
+  if (state.selectedDirectUserId === otherId) renderDirectChat();
+}
+
+function otherDirectUserId(message) {
+  return message.sender_id === state.currentProfile?.id ? message.recipient_id : message.sender_id;
 }
 
 async function refreshDevices() {
@@ -257,6 +745,10 @@ function reconnectTextChat() {
 }
 
 function connect() {
+  if (!canUseApp()) {
+    setStatus("нужен вход и @ник");
+    return;
+  }
   if (state.joined || state.connecting) return;
   const appId = el.appId.value.trim();
   const nickname = el.name.value.trim();
@@ -369,12 +861,17 @@ function cleanupConnection() {
   renderMembers();
   renderDirectUsers();
   renderDirectChat();
+  refreshAppAccess();
 }
 
 function sendMessage(event) {
   event.preventDefault();
   const text = el.message.value.trim();
   if (!text) return;
+  if (!canUseApp()) {
+    addSystem("Сначала войди в аккаунт и выбери @ник.");
+    return;
+  }
   if (!state.joined) {
     addSystem("Сначала подключись к Photon.");
     return;
@@ -417,24 +914,38 @@ function profileFromActor(actor) {
   });
 }
 
-function sendDirectMessage(event) {
+async function sendDirectMessage(event) {
   event.preventDefault();
   const text = el.directMessage.value.trim();
-  const actorNr = state.selectedDirectActor;
-  const profile = state.profiles.get(actorNr);
-  if (!text || !actorNr || !profile || !state.joined) return;
-  const message = {
-    id: crypto.randomUUID(),
-    senderId: state.clientId,
-    senderName: el.name.value.trim(),
-    recipientId: profile.clientId,
-    recipientName: profile.name,
-    text,
-    time: Date.now(),
-  };
-  addDirectMessage(profile.clientId, message, true);
-  state.client.raiseEvent(EVENT_DIRECT_MESSAGE, message, { targetActors: [Number(actorNr)] });
+  const recipientId = state.selectedDirectUserId;
+  if (!text || !recipientId || !state.authClient || !state.currentProfile) return;
+  if (state.blockedUsers.has(recipientId)) {
+    addSystem("Пользователь заблокирован. Разблокируй его, чтобы написать.");
+    return;
+  }
+  const { data, error } = await awaitInsertDirectMessage(recipientId, text);
+  if (error) {
+    addSystem(`Не удалось отправить личное сообщение: ${error.message}`);
+    return;
+  }
+  if (data && !state.directMessagesStore.some((item) => item.id === data.id)) {
+    state.directMessagesStore.push(data);
+  }
   el.directMessage.value = "";
+  renderDirectChatList();
+  renderDirectChat();
+}
+
+async function awaitInsertDirectMessage(recipientId, text) {
+  return state.authClient
+    .from("direct_messages")
+    .insert({
+      sender_id: state.currentProfile.id,
+      recipient_id: recipientId,
+      content: text.slice(0, 4000),
+    })
+    .select("id, sender_id, recipient_id, content, created_at")
+    .single();
 }
 
 function receiveDirectMessage(data, actorNr) {
@@ -446,50 +957,149 @@ function receiveDirectMessage(data, actorNr) {
       name: data.senderName || memberName(actorNr),
     });
   }
-  addDirectMessage(data.senderId, data, false);
-  renderDirectUsers();
-  if (state.selectedDirectActor === actorNr) renderDirectChat();
-}
-
-function addDirectMessage(chatId, message, own) {
-  const chat = state.directChats.get(chatId) || [];
-  if (chat.some((item) => item.id === message.id)) return;
-  chat.push({ ...message, own });
-  state.directChats.set(chatId, chat.slice(-100));
-  if (state.profiles.get(state.selectedDirectActor)?.clientId === chatId) renderDirectChat();
 }
 
 function renderDirectUsers() {
-  el.directUsers.innerHTML = "";
-  for (const [actorNr, profile] of state.profiles) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `direct-user-button${state.selectedDirectActor === actorNr ? " active" : ""}`;
-    button.textContent = profile.name;
-    button.addEventListener("click", () => {
-      state.selectedDirectActor = actorNr;
-      renderDirectUsers();
-      renderDirectChat();
-    });
-    el.directUsers.appendChild(button);
+  renderDirectChatList();
+}
+
+async function searchDirectUser(event) {
+  event.preventDefault();
+  el.directSearchResults.innerHTML = "";
+  if (!state.authClient || !state.currentProfile) return;
+  const handle = normalizeHandle(el.directSearch.value);
+  if (!HANDLE_PATTERN.test(handle)) {
+    el.directSearchResults.textContent = "Введи @ник от 3 символов.";
+    return;
   }
+  const { data, error } = await state.authClient
+    .from("profiles")
+    .select("id, handle, display_name")
+    .eq("handle", handle)
+    .maybeSingle();
+  if (error) {
+    el.directSearchResults.textContent = `Ошибка поиска: ${error.message}`;
+    return;
+  }
+  if (!data) {
+    el.directSearchResults.textContent = "Такого @ника нет.";
+    return;
+  }
+  if (data.id === state.currentProfile.id) {
+    el.directSearchResults.textContent = "Это твой аккаунт.";
+    return;
+  }
+  state.directProfiles.set(data.id, data);
+  const button = createDirectProfileButton(data, "Начать чат");
+  el.directSearchResults.appendChild(button);
+}
+
+function renderDirectChatList() {
+  if (!el.directChatList) return;
+  el.directChatList.innerHTML = "";
+  if (!state.currentProfile) {
+    el.directChatList.innerHTML = `<div class="empty-state">Войди и выбери @ник</div>`;
+    return;
+  }
+  const conversations = buildDirectConversations();
+  if (!conversations.length) {
+    el.directChatList.innerHTML = `<div class="empty-state">Пока нет личных чатов</div>`;
+    return;
+  }
+  for (const conversation of conversations) {
+    const button = createDirectProfileButton(conversation.profile, conversation.last.content);
+    el.directChatList.appendChild(button);
+  }
+}
+
+function buildDirectConversations() {
+  const latest = new Map();
+  for (const message of state.directMessagesStore) {
+    const otherId = otherDirectUserId(message);
+    if (!otherId || state.blockedUsers.has(otherId)) continue;
+    const previous = latest.get(otherId);
+    if (!previous || new Date(message.created_at) > new Date(previous.created_at)) latest.set(otherId, message);
+  }
+  return [...latest.entries()]
+    .map(([userId, last]) => ({ profile: state.directProfiles.get(userId) || { id: userId, handle: "unknown", display_name: "Неизвестный" }, last }))
+    .sort((a, b) => new Date(b.last.created_at) - new Date(a.last.created_at));
+}
+
+function createDirectProfileButton(profile, preview) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `direct-user-button${state.selectedDirectUserId === profile.id ? " active" : ""}`;
+  button.appendChild(createAvatar(profile));
+  const textWrap = document.createElement("div");
+  textWrap.className = "direct-user-text";
+  const name = document.createElement("span");
+  name.textContent = displayProfile(profile);
+  const small = document.createElement("small");
+  small.textContent = preview || `@${profile.handle}`;
+  textWrap.append(name, small);
+  button.appendChild(textWrap);
+  button.addEventListener("click", () => openDirectChat(profile));
+  return button;
 }
 
 function renderDirectChat() {
   el.directMessages.innerHTML = "";
-  const profile = state.profiles.get(state.selectedDirectActor);
-  const enabled = Boolean(profile && state.joined);
+  const profile = state.directProfiles.get(state.selectedDirectUserId);
+  const blocked = state.selectedDirectUserId && state.blockedUsers.has(state.selectedDirectUserId);
+  const enabled = Boolean(profile && state.currentProfile && !blocked);
   el.directMessage.disabled = !enabled;
   el.directForm.querySelector("button").disabled = !enabled;
-  el.directStatus.textContent = enabled ? `Переписка с ${profile.name}` : "Выбери пользователя справа";
-  if (!profile) return;
-  const chat = state.directChats.get(profile.clientId) || [];
-  for (const message of chat) {
-    addMessage(message.own ? el.name.value.trim() : profile.name, message.text, false, el.directMessages);
+  el.blockDirect.disabled = !profile;
+  el.blockDirect.textContent = blocked ? "Разблокировать" : "Заблокировать";
+  el.directStatus.textContent = profile
+    ? `${displayProfile(profile)}${blocked ? " заблокирован" : ""}`
+    : "Выбери чат слева или найди человека по @нику";
+  if (!profile || !state.currentProfile) return;
+  const messages = state.directMessagesStore.filter((message) => otherDirectUserId(message) === profile.id);
+  for (const message of messages) {
+    const own = message.sender_id === state.currentProfile.id;
+    addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile);
   }
+  el.directMessages.scrollTop = el.directMessages.scrollHeight;
+}
+
+async function toggleDirectBlock() {
+  const userId = state.selectedDirectUserId;
+  if (!userId || !state.currentProfile || !state.authClient) return;
+  await setDirectBlock(userId, !state.blockedUsers.has(userId));
+}
+
+async function setDirectBlock(userId, shouldBlock) {
+  const blocked = state.blockedUsers.has(userId);
+  if (shouldBlock === blocked) return;
+  if (!shouldBlock) {
+    const { error } = await state.authClient
+      .from("blocked_users")
+      .delete()
+      .eq("blocker_id", state.currentProfile.id)
+      .eq("blocked_id", userId);
+    if (error) {
+      addSystem(`Не удалось разблокировать пользователя: ${error.message}`);
+      return;
+    }
+    state.blockedUsers.delete(userId);
+  } else {
+    const { error } = await state.authClient.from("blocked_users").insert({
+      blocker_id: state.currentProfile.id,
+      blocked_id: userId,
+    });
+    if (error) {
+      addSystem(`Не удалось заблокировать пользователя: ${error.message}`);
+      return;
+    }
+    state.blockedUsers.add(userId);
+  }
+  renderDirectChatList();
+  renderDirectChat();
 }
 
 async function toggleVoice() {
+  if (!canUseApp()) return;
   if (state.voiceConnecting) return;
   if (state.voiceEnabled) {
     stopVoice();
@@ -786,11 +1396,12 @@ async function applyMicrophoneMute() {
 }
 
 function updateVoiceControls() {
-  el.voice.disabled = state.voiceConnecting;
-  el.mute.disabled = state.voiceConnecting || !state.voiceEnabled || state.deafened;
-  el.deafen.disabled = state.voiceConnecting || !state.voiceEnabled;
-  el.camera.disabled = state.voiceConnecting || !state.voiceEnabled;
-  el.screenShare.disabled = state.voiceConnecting || !state.voiceEnabled;
+  const locked = !canUseApp();
+  el.voice.disabled = locked || state.voiceConnecting;
+  el.mute.disabled = locked || state.voiceConnecting || !state.voiceEnabled || state.deafened;
+  el.deafen.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
+  el.camera.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
+  el.screenShare.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
   el.voice.textContent = state.voiceConnecting ? "Подключение..." : state.voiceEnabled ? "Выйти из голоса" : "Войти в голос";
   el.mute.textContent = state.micMuted ? "Включить микрофон" : "Выключить микрофон";
   el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
@@ -1247,7 +1858,8 @@ function myActorNr() {
 }
 
 function setConnectedUi(connected) {
-  el.message.disabled = !connected;
+  el.message.disabled = !connected || !canUseApp();
+  el.form.querySelector("button").disabled = !connected || !canUseApp();
   el.badge.textContent = connected ? "online" : "offline";
   el.badge.classList.toggle("online", connected);
   updateVoiceControls();
@@ -1353,10 +1965,23 @@ function addSystem(text) {
   addMessage("Система", text, true, el.systemMessages);
 }
 
-function addMessage(author, text, system = false, container = el.messages) {
+function addMessage(author, text, system = false, container = el.messages, profile = null) {
   const item = document.createElement("div");
   item.className = `message${system ? " system" : ""}`;
-  item.innerHTML = `<div class="author">${escapeHtml(author)}</div><div>${escapeHtml(text)}</div>`;
+  if (profile) {
+    const header = document.createElement("div");
+    header.className = "message-header";
+    header.appendChild(createAvatar(profile, "message-avatar"));
+    const authorEl = document.createElement("div");
+    authorEl.className = "author";
+    authorEl.textContent = author;
+    header.appendChild(authorEl);
+    const textEl = document.createElement("div");
+    textEl.textContent = text;
+    item.append(header, textEl);
+  } else {
+    item.innerHTML = `<div class="author">${escapeHtml(author)}</div><div>${escapeHtml(text)}</div>`;
+  }
   container.appendChild(item);
   container.scrollTop = container.scrollHeight;
 }
