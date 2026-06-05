@@ -111,6 +111,8 @@
                 <button id="directModeBtn" class="active" type="button">Личные сообщения</button>
                 <button id="groupModeBtn" type="button">Группы</button>
               </div>
+              <button id="participantsBtn" type="button" disabled>Участники</button>
+              <button id="mobileBackChatsBtn" class="mobile-back-chats" type="button">К списку</button>
               <button id="blockDirectBtn" type="button" disabled>Заблокировать</button>
             </div>
           </header>
@@ -285,6 +287,15 @@
           <input id="groupJoinInput" autocomplete="off" placeholder="ID группы" />
           <button class="primary" type="submit">Войти</button>
         </form>
+      </section>
+    </div>
+
+    <div id="participantsModal" class="modal-backdrop" hidden>
+      <section class="modal-card">
+        <button id="closeParticipantsModalBtn" class="modal-close" type="button" aria-label="Закрыть">×</button>
+        <h3 id="participantsModalTitle">Участники</h3>
+        <p id="participantsModalText">Кто есть в этом разговоре.</p>
+        <div id="participantsList" class="participants-list"></div>
       </section>
     </div>
 

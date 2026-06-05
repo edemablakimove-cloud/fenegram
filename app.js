@@ -1,4 +1,4 @@
-const ROOM_NAME = "main";
+﻿const ROOM_NAME = "main";
 const EVENT_TEXT = 1;
 const EVENT_DELETE_MESSAGE = 2;
 const EVENT_DIRECT_MESSAGE = 3;
@@ -54,6 +54,7 @@ const state = {
   groups: new Map(),
   groupMemberships: new Map(),
   groupMessagesStore: [],
+  groupMembers: new Map(),
   selectedGroupId: null,
   groupChannel: null,
   voiceRoomName: ROOM_NAME,
@@ -153,6 +154,13 @@ const el = {
   closeConversationModal: document.querySelector("#closeConversationModalBtn"),
   conversationModalTitle: document.querySelector("#conversationModalTitle"),
   conversationModalText: document.querySelector("#conversationModalText"),
+  mobileBackChats: document.querySelector("#mobileBackChatsBtn"),
+  participants: document.querySelector("#participantsBtn"),
+  participantsModal: document.querySelector("#participantsModal"),
+  closeParticipantsModal: document.querySelector("#closeParticipantsModalBtn"),
+  participantsModalTitle: document.querySelector("#participantsModalTitle"),
+  participantsModalText: document.querySelector("#participantsModalText"),
+  participantsList: document.querySelector("#participantsList"),
   blockDirect: document.querySelector("#blockDirectBtn"),
   userMenu: document.querySelector("#userMenu"),
   userMenuAvatar: document.querySelector("#userMenuAvatar"),
@@ -223,8 +231,14 @@ el.conversationPrimaryAction.addEventListener("click", () => {
   openConversationModal(state.conversationPanel === "group" ? "group-create" : "direct-search");
 });
 el.closeConversationModal.addEventListener("click", closeConversationModal);
+el.mobileBackChats.addEventListener("click", backToConversationList);
+el.participants.addEventListener("click", openParticipantsModal);
+el.closeParticipantsModal.addEventListener("click", closeParticipantsModal);
 el.conversationModal.addEventListener("click", (event) => {
   if (event.target === el.conversationModal) closeConversationModal();
+});
+el.participantsModal.addEventListener("click", (event) => {
+  if (event.target === el.participantsModal) closeParticipantsModal();
 });
 el.blockDirect.addEventListener("click", toggleDirectBlock);
 el.userMenuMessage.addEventListener("click", () => {
@@ -500,6 +514,7 @@ function refreshAppAccess() {
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
+  updateConversationLayoutState();
 }
 
 function canUseMainChannel() {
@@ -652,6 +667,7 @@ function openDirectChat(profile) {
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
+  updateConversationLayoutState();
 }
 
 function clearDirectData() {
@@ -670,10 +686,33 @@ function clearGroupData() {
   state.groups.clear();
   state.groupMemberships.clear();
   state.groupMessagesStore = [];
+  state.groupMembers.clear();
   state.selectedGroupId = null;
   if (state.selectedConversationType === "group") state.selectedConversationType = null;
   renderGroupList();
   renderDirectChat();
+}
+
+async function loadGroupMembers(groupId, force = false) {
+  if (!state.authClient || !state.currentProfile || !groupId) return [];
+  if (!force && state.groupMembers.has(groupId)) return state.groupMembers.get(groupId);
+  const { data, error } = await state.authClient
+    .from("group_members")
+    .select("group_id, user_id, role, profiles(id, handle, display_name)")
+    .eq("group_id", groupId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    addSystem(`Не удалось загрузить участников группы: ${friendlyDatabaseError(error)}`);
+    return state.groupMembers.get(groupId) || [];
+  }
+  const members = [];
+  for (const row of data || []) {
+    const profile = row.profiles || { id: row.user_id, handle: "unknown", display_name: "Неизвестный" };
+    state.directProfiles.set(profile.id, profile);
+    members.push({ profile, role: row.role || "member" });
+  }
+  state.groupMembers.set(groupId, members);
+  return members;
 }
 
 async function loadDirectData() {
@@ -1301,6 +1340,8 @@ function openGroupChat(group) {
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
+  updateConversationLayoutState();
+  loadGroupMembers(group.id).catch(() => {});
 }
 
 function showConversationPanel(panel) {
@@ -1320,6 +1361,25 @@ function showConversationPanel(panel) {
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
+  updateConversationLayoutState();
+}
+
+function backToConversationList() {
+  state.selectedConversationType = null;
+  state.selectedDirectUserId = null;
+  state.selectedGroupId = null;
+  renderDirectChatList();
+  renderGroupList();
+  renderDirectChat();
+  updateConversationLayoutState();
+}
+
+function updateConversationLayoutState() {
+  const open = Boolean(state.selectedConversationType);
+  el.directView.classList.toggle("conversation-open", open);
+  el.directView.classList.toggle("no-conversation", !open);
+  el.mobileBackChats.hidden = !open;
+  el.participants.disabled = !open;
 }
 
 function openConversationModal(mode) {
@@ -1345,6 +1405,82 @@ function openConversationModal(mode) {
 
 function closeConversationModal() {
   el.conversationModal.hidden = true;
+}
+
+async function openParticipantsModal() {
+  if (!state.selectedConversationType || !state.currentProfile) return;
+  el.participantsModal.hidden = false;
+  el.participantsList.innerHTML = `<div class="empty-state">Загрузка...</div>`;
+  if (state.selectedConversationType === "direct") {
+    renderDirectParticipants();
+    return;
+  }
+  await renderGroupParticipants();
+}
+
+function closeParticipantsModal() {
+  el.participantsModal.hidden = true;
+}
+
+function renderDirectParticipants() {
+  const profile = state.directProfiles.get(state.selectedDirectUserId);
+  el.participantsModalTitle.textContent = "Участники личного звонка";
+  el.participantsModalText.textContent = profile ? displayProfile(profile) : "Личный чат";
+  const rows = [{ profile: state.currentProfile, role: "ты" }];
+  if (profile) rows.push({ profile, role: "собеседник" });
+  renderParticipantRows(rows);
+}
+
+async function renderGroupParticipants() {
+  const group = state.groups.get(state.selectedGroupId);
+  if (!group) {
+    el.participantsList.innerHTML = `<div class="empty-state">Группа не выбрана</div>`;
+    return;
+  }
+  el.participantsModalTitle.textContent = `Участники: ${group.name}`;
+  el.participantsModalText.textContent = `ID группы: ${group.id}`;
+  const members = await loadGroupMembers(group.id, true);
+  renderParticipantRows(members);
+}
+
+function renderParticipantRows(rows) {
+  el.participantsList.innerHTML = "";
+  if (!rows.length) {
+    el.participantsList.innerHTML = `<div class="empty-state">Пока никого нет</div>`;
+    return;
+  }
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "participant-row";
+    item.appendChild(createAvatar(row.profile, "participant-avatar"));
+    const text = document.createElement("div");
+    text.className = "participant-text";
+    const name = document.createElement("strong");
+    name.textContent = `${displayProfile(row.profile)}${row.profile?.id === state.currentProfile?.id ? " (ты)" : ""}`;
+    const meta = document.createElement("span");
+    meta.textContent = `${participantRoleLabel(row.role)} · ${isProfileInVoice(row.profile) ? "в голосе" : "не в голосе"}`;
+    text.append(name, meta);
+    item.appendChild(text);
+    el.participantsList.appendChild(item);
+  }
+}
+
+function participantRoleLabel(role) {
+  if (role === "owner") return "владелец";
+  if (role === "ты") return "ты";
+  if (role === "собеседник") return "собеседник";
+  return "участник";
+}
+
+function isProfileInVoice(profile) {
+  if (!profile) return false;
+  const labels = new Set([
+    profile.display_name,
+    profile.handle,
+    profile.handle ? `@${profile.handle}` : "",
+    displayProfile(profile),
+  ].filter(Boolean));
+  return [...state.voiceParticipants.values()].some((name) => labels.has(name));
 }
 
 function renderGroupList() {
@@ -1512,6 +1648,8 @@ async function inviteUserToGroup(event) {
     return;
   }
   state.directProfiles.set(profile.id, profile);
+  state.groupMembers.delete(group.id);
+  await loadGroupMembers(group.id, true);
   el.groupInvite.value = "";
   addSystem(`${displayProfile(profile)} добавлен в группу ${group.name}.`);
 }
@@ -1626,6 +1764,11 @@ async function toggleVoice() {
     stopVoice();
     return;
   }
+  if (!state.selectedConversationType && !canUseMainChannel()) {
+    addSystem("Выбери личный чат или группу, чтобы начать звонок.");
+    showView("direct");
+    return;
+  }
   state.voiceConnecting = true;
   updateVoiceControls();
   try {
@@ -1688,9 +1831,14 @@ async function startVoice() {
 function currentVoiceRoom() {
   const group = state.groups.get(state.selectedGroupId);
   if (state.selectedConversationType === "group" && group) {
-    return { name: `group-${group.id}`, label: `группа ${group.name}` };
+    return { name: `group-${group.id}`, label: `group ${group.name}` };
   }
-  return { name: ROOM_NAME, label: "главный канал" };
+  const directProfile = state.directProfiles.get(state.selectedDirectUserId);
+  if (state.selectedConversationType === "direct" && directProfile && state.currentProfile?.id) {
+    const pair = [state.currentProfile.id, directProfile.id].sort().join("-");
+    return { name: `dm-${pair}`, label: `DM call with ${displayProfile(directProfile)}` };
+  }
+  return { name: ROOM_NAME, label: "main channel" };
 }
 
 function bindLiveKitEvents(room) {
@@ -1956,6 +2104,19 @@ function updateVoiceControls() {
 
 function friendlyLiveKitError(error) {
   const message = error?.message || String(error || "");
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("too many") ||
+    lower.includes("rate limit") ||
+    lower.includes("server busy") ||
+    lower.includes("overload") ||
+    lower.includes("unavailable") ||
+    lower.includes("503")
+  ) {
+    return "голосовой сервер перегружен или временно недоступен. Звонить пока нельзя, попробуй позже.";
+  }
   if (message.includes("publication of local track timed out")) {
     return "LiveKit подключился, но сеть не дала отправить микрофон на сервер. Попробуй другой браузер, мобильный интернет или VPN.";
   }
@@ -2530,3 +2691,4 @@ function escapeHtml(value) {
     "'": "&#039;",
   })[char]);
 }
+
