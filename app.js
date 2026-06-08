@@ -9,7 +9,7 @@ const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
-const VOICE_ENGINE = "jitsi";
+const VOICE_ENGINE = "livekit";
 const JITSI_DOMAIN = "meet.jit.si";
 const RTC_CONFIG = {
   iceServers: [
