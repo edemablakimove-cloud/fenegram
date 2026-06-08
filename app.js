@@ -9,7 +9,8 @@ const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
-const VOICE_ENGINE = "photon";
+const VOICE_ENGINE = "jitsi";
+const JITSI_DOMAIN = "meet.jit.si";
 const RTC_CONFIG = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -27,6 +28,8 @@ const state = {
   members: new Map(),
   volumes: new Map(),
   livekitRoom: null,
+  jitsiApi: null,
+  jitsiContainer: null,
   photonVoiceClient: null,
   photonVoicePeers: new Map(),
   photonVoiceJoined: false,
@@ -2075,8 +2078,169 @@ async function toggleVoice() {
 }
 
 async function startVoice() {
+  if (VOICE_ENGINE === "jitsi") return startJitsiVoice();
   if (VOICE_ENGINE === "photon") return startPhotonVoice();
   return startLiveKitVoice();
+}
+
+async function startJitsiVoice() {
+  await loadJitsiScript();
+  if (!window.JitsiMeetExternalAPI) {
+    throw new Error("Jitsi API не загрузился");
+  }
+
+  const voiceRoom = currentVoiceRoom();
+  state.voiceRoomName = voiceRoom.name;
+  state.voiceRoomLabel = `${voiceRoom.label} (Jitsi)`;
+  const parentNode = createJitsiContainer();
+  const roomName = jitsiRoomName(voiceRoom.name);
+
+  state.localVoiceIdentity = "jitsi-local";
+  state.voiceParticipants.clear();
+  state.voiceParticipants.set(state.localVoiceIdentity, fenegramDisplayName());
+  renderMembers();
+
+  addSystem("Подключение к голосу через Jitsi...");
+  const api = new window.JitsiMeetExternalAPI(JITSI_DOMAIN, {
+    roomName,
+    parentNode,
+    width: "100%",
+    height: "100%",
+    userInfo: {
+      displayName: fenegramDisplayName(),
+      email: state.authUser?.email || undefined,
+    },
+    configOverwrite: {
+      prejoinConfig: { enabled: false },
+      prejoinPageEnabled: false,
+      startWithAudioMuted: false,
+      startWithVideoMuted: true,
+      disableDeepLinking: true,
+    },
+    interfaceConfigOverwrite: {
+      MOBILE_APP_PROMO: false,
+      SHOW_JITSI_WATERMARK: false,
+      SHOW_WATERMARK_FOR_GUESTS: false,
+    },
+  });
+
+  state.jitsiApi = api;
+  bindJitsiEvents(api);
+  state.voiceEnabled = true;
+  state.voiceConnecting = false;
+  state.micMuted = false;
+  state.deafened = false;
+  state.cameraEnabled = false;
+  state.screenShareEnabled = false;
+  updateVoiceControls();
+  renderMembers();
+  addSystem("Голос включен через Jitsi. Это третий тестовый вариант.");
+}
+
+function loadJitsiScript() {
+  if (window.JitsiMeetExternalAPI) return Promise.resolve();
+  const existing = document.querySelector('script[data-fenegram-jitsi="true"]');
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener("load", resolve, { once: true });
+      existing.addEventListener("error", () => reject(new Error("не удалось загрузить Jitsi API")), { once: true });
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `https://${JITSI_DOMAIN}/external_api.js`;
+    script.async = true;
+    script.dataset.fenegramJitsi = "true";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("не удалось загрузить Jitsi API"));
+    document.head.appendChild(script);
+  });
+}
+
+function createJitsiContainer() {
+  removeJitsiContainer();
+  const tile = document.createElement("article");
+  tile.className = "video-tile jitsi-tile";
+  const frame = document.createElement("div");
+  frame.className = "jitsi-frame";
+  const footer = document.createElement("div");
+  footer.className = "video-tile-footer";
+  const label = document.createElement("span");
+  label.textContent = "Jitsi-звонок";
+  const restart = document.createElement("button");
+  restart.type = "button";
+  restart.textContent = "Перезапустить";
+  restart.addEventListener("click", restartVoiceIfNeeded);
+  footer.append(label, restart);
+  tile.append(frame, footer);
+  el.videoGrid.appendChild(tile);
+  el.videoStage.hidden = false;
+  state.jitsiContainer = tile;
+  return frame;
+}
+
+function removeJitsiContainer() {
+  state.jitsiContainer?.remove();
+  state.jitsiContainer = null;
+  el.videoStage.hidden = state.videoTiles.size === 0;
+}
+
+function bindJitsiEvents(api) {
+  api.addEventListener("videoConferenceJoined", (event) => {
+    state.localVoiceIdentity = `jitsi-${event.id || "local"}`;
+    state.voiceParticipants.set(state.localVoiceIdentity, fenegramDisplayName());
+    refreshJitsiParticipants();
+    renderMembers();
+  });
+  api.addEventListener("participantJoined", (event) => {
+    state.voiceParticipants.set(`jitsi-${event.id}`, event.displayName || "Участник");
+    renderMembers();
+  });
+  api.addEventListener("participantLeft", (event) => {
+    state.voiceParticipants.delete(`jitsi-${event.id}`);
+    renderMembers();
+  });
+  api.addEventListener("audioMuteStatusChanged", (event) => {
+    state.micMuted = Boolean(event.muted);
+    updateVoiceControls();
+    renderMembers();
+  });
+  api.addEventListener("videoMuteStatusChanged", (event) => {
+    state.cameraEnabled = !event.muted;
+    updateVoiceControls();
+    renderMembers();
+  });
+  api.addEventListener("screenSharingStatusChanged", (event) => {
+    state.screenShareEnabled = Boolean(event.on);
+    updateVoiceControls();
+    renderMembers();
+  });
+  api.addEventListener("readyToClose", () => {
+    if (state.voiceEnabled && VOICE_ENGINE === "jitsi") cleanupVoice();
+  });
+}
+
+function refreshJitsiParticipants() {
+  const participants = state.jitsiApi?.getParticipantsInfo?.() || [];
+  for (const participant of participants) {
+    if (!participant?.participantId) continue;
+    const identity = `jitsi-${participant.participantId}`;
+    const name = participant.displayName || participant.formattedDisplayName || "Участник";
+    state.voiceParticipants.set(identity, name);
+  }
+}
+
+function jitsiRoomName(roomName) {
+  return `Fenegram-${hashString(roomName || ROOM_NAME)}`;
+}
+
+function hashString(value) {
+  let hash = 0;
+  const text = String(value);
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 async function startLiveKitVoice() {
@@ -2506,6 +2670,11 @@ function getLocalMicrophonePublication(room) {
 }
 
 function stopVoice() {
+  if (state.jitsiApi) {
+    try {
+      state.jitsiApi.dispose();
+    } catch {}
+  }
   const room = state.livekitRoom;
   if (room) {
     room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
@@ -2529,6 +2698,8 @@ function cleanupVoice() {
   el.voice.textContent = "Войти в голос";
   state.voiceParticipants.clear();
   state.speakingNames.clear();
+  state.jitsiApi = null;
+  removeJitsiContainer();
   cleanupPhotonVoiceTransport();
   for (const audio of state.audioElements.values()) audio.remove();
   state.audioElements.clear();
@@ -2608,6 +2779,13 @@ function removeParticipantAudio(identity) {
 }
 
 async function toggleMute() {
+  if (VOICE_ENGINE === "jitsi" && state.jitsiApi) {
+    state.jitsiApi.executeCommand("toggleAudio");
+    state.micMuted = !state.micMuted;
+    updateVoiceControls();
+    renderMembers();
+    return;
+  }
   if (!state.voiceEnabled || !state.localPublication) return;
   if (state.deafened) return;
   state.micMuted = !state.micMuted;
@@ -2617,6 +2795,15 @@ async function toggleMute() {
 }
 
 async function toggleDeafen() {
+  if (VOICE_ENGINE === "jitsi" && state.jitsiApi) {
+    state.jitsiApi.executeCommand("toggleAudio");
+    state.deafened = !state.deafened;
+    state.micMuted = state.deafened;
+    updateVoiceControls();
+    renderMembers();
+    addSystem(state.deafened ? "Микрофон в Jitsi выключен. Звук можно выключить в самой рамке Jitsi или во вкладке браузера." : "Микрофон в Jitsi включен.");
+    return;
+  }
   if (!state.voiceEnabled) return;
   if (!state.deafened) {
     state.deafened = true;
@@ -2705,8 +2892,16 @@ function friendlyLiveKitError(error) {
 }
 
 function friendlyVoiceError(error) {
+  if (VOICE_ENGINE === "jitsi") return friendlyJitsiError(error);
   if (VOICE_ENGINE === "photon") return friendlyPhotonVoiceError(error);
   return friendlyLiveKitError(error);
+}
+
+function friendlyJitsiError(error) {
+  const message = error?.message || String(error || "");
+  if (message.includes("Jitsi API")) return "не удалось загрузить Jitsi. Проверь интернет, блокировки или VPN.";
+  if (error?.name === "NotAllowedError") return "браузер не дал доступ к микрофону.";
+  return message;
 }
 
 function friendlyPhotonVoiceError(error) {
@@ -2721,10 +2916,18 @@ function friendlyPhotonVoiceError(error) {
 }
 
 function voiceEngineLabel() {
+  if (VOICE_ENGINE === "jitsi") return "Jitsi";
   return VOICE_ENGINE === "photon" ? "Photon" : "LiveKit";
 }
 
 async function toggleCamera() {
+  if (VOICE_ENGINE === "jitsi" && state.jitsiApi) {
+    state.jitsiApi.executeCommand("toggleVideo");
+    state.cameraEnabled = !state.cameraEnabled;
+    updateVoiceControls();
+    renderMembers();
+    return;
+  }
   if (VOICE_ENGINE === "photon") {
     addSystem("Камера в Photon-тесте пока выключена. Сейчас проверяем именно звук.");
     return;
@@ -2747,6 +2950,13 @@ async function toggleCamera() {
 }
 
 async function toggleScreenShare() {
+  if (VOICE_ENGINE === "jitsi" && state.jitsiApi) {
+    state.jitsiApi.executeCommand("toggleShareScreen");
+    state.screenShareEnabled = !state.screenShareEnabled;
+    updateVoiceControls();
+    renderMembers();
+    return;
+  }
   if (VOICE_ENGINE === "photon") {
     addSystem("Демонстрация экрана в Photon-тесте пока выключена. Сейчас проверяем именно звук.");
     return;
