@@ -3,11 +3,19 @@ const EVENT_TEXT = 1;
 const EVENT_DELETE_MESSAGE = 2;
 const EVENT_DIRECT_MESSAGE = 3;
 const EVENT_PROFILE = 4;
+const EVENT_VOICE_SIGNAL = 5;
 const APP_VERSION = "0.2.0";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
+const VOICE_ENGINE = "photon";
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ],
+};
 const NAME_CHANGE_INTERVAL = 24 * 60 * 60 * 1000;
 const CHAT_HISTORY_KEY = "pm.chatHistory";
 const CHAT_HISTORY_LIMIT = 100;
@@ -19,6 +27,10 @@ const state = {
   members: new Map(),
   volumes: new Map(),
   livekitRoom: null,
+  photonVoiceClient: null,
+  photonVoicePeers: new Map(),
+  photonVoiceJoined: false,
+  localVoiceIdentity: "",
   voiceEnabled: false,
   voiceConnecting: false,
   voiceParticipants: new Map(),
@@ -79,6 +91,8 @@ const el = {
   directView: document.querySelector("#directView"),
   systemView: document.querySelector("#systemView"),
   settingsView: document.querySelector("#settingsView"),
+  sidebar: document.querySelector(".sidebar"),
+  sidebarNav: document.querySelector(".sidebar-nav"),
   voice: document.querySelector("#voiceBtn"),
   mute: document.querySelector("#muteBtn"),
   deafen: document.querySelector("#deafenBtn"),
@@ -115,6 +129,10 @@ const el = {
   connectionCheck: document.querySelector("#connectionCheckBtn"),
   connectionCheckStatus: document.querySelector("#connectionCheckStatus"),
   accountStatus: document.querySelector("#accountStatus"),
+  emailForm: document.querySelector("#emailAuthForm"),
+  emailInput: document.querySelector("#emailInput"),
+  passwordInput: document.querySelector("#passwordInput"),
+  emailRegister: document.querySelector("#emailRegisterBtn"),
   googleLogin: document.querySelector("#googleLoginBtn"),
   vkLogin: document.querySelector("#vkLoginBtn"),
   logout: document.querySelector("#logoutBtn"),
@@ -128,6 +146,10 @@ const el = {
   gateGoogleLogin: document.querySelector("#gateGoogleLoginBtn"),
   gateVkLogin: document.querySelector("#gateVkLoginBtn"),
   gateLogout: document.querySelector("#gateLogoutBtn"),
+  gateEmailForm: document.querySelector("#gateEmailAuthForm"),
+  gateEmailInput: document.querySelector("#gateEmailInput"),
+  gatePasswordInput: document.querySelector("#gatePasswordInput"),
+  gateEmailRegister: document.querySelector("#gateEmailRegisterBtn"),
   openAuthSettings: document.querySelector("#openAuthSettingsBtn"),
   handleForm: document.querySelector("#handleForm"),
   handleInput: document.querySelector("#handleInput"),
@@ -187,6 +209,7 @@ loadChatHistory();
 refreshDevices();
 setConnectedUi(false);
 updateNameChangeUi();
+syncCallParticipantsPlacement();
 startApp();
 
 el.channelTab.addEventListener("click", () => showView("channel"));
@@ -224,6 +247,10 @@ el.googleLogin.addEventListener("click", () => signInWithProvider("google"));
 el.vkLogin.addEventListener("click", () => signInWithProvider(el.vkProvider.value.trim() || "custom:vk"));
 el.gateGoogleLogin.addEventListener("click", () => signInWithProvider("google"));
 el.gateVkLogin.addEventListener("click", () => signInWithProvider(el.vkProvider.value.trim() || "custom:vk"));
+el.emailForm.addEventListener("submit", (event) => signInWithEmail(event, "settings"));
+el.emailRegister.addEventListener("click", () => signUpWithEmail("settings"));
+el.gateEmailForm.addEventListener("submit", (event) => signInWithEmail(event, "gate"));
+el.gateEmailRegister.addEventListener("click", () => signUpWithEmail("gate"));
 el.gateLogout.addEventListener("click", signOut);
 el.logout.addEventListener("click", signOut);
 el.saveAuthSettings.addEventListener("click", saveAuthSettings);
@@ -273,6 +300,7 @@ document.addEventListener("click", (event) => {
   if (el.userMenu.contains(event.target) || event.target.closest(".avatar")) return;
   hideUserMenu();
 });
+window.addEventListener("resize", syncCallParticipantsPlacement);
 
 async function startApp() {
   await initAuth();
@@ -437,6 +465,14 @@ function fenegramDisplayName() {
 function renderAccount() {
   const configured = Boolean(state.authClient);
   const signedIn = Boolean(state.authUser);
+  el.emailForm.hidden = signedIn;
+  el.gateEmailForm.hidden = signedIn;
+  el.emailInput.disabled = !configured || signedIn;
+  el.passwordInput.disabled = !configured || signedIn;
+  el.emailRegister.disabled = !configured || signedIn;
+  el.gateEmailInput.disabled = !configured || signedIn;
+  el.gatePasswordInput.disabled = !configured || signedIn;
+  el.gateEmailRegister.disabled = !configured || signedIn;
   el.googleLogin.hidden = signedIn;
   el.vkLogin.hidden = signedIn;
   el.googleLogin.disabled = !configured || signedIn;
@@ -457,9 +493,9 @@ function renderAccount() {
     return;
   }
   if (!state.authUser) {
-    el.accountStatus.textContent = "Можно войти через Google или VK";
+    el.accountStatus.textContent = "Можно войти по почте, через Google или VK";
     el.authSettingsStatus.textContent = "Supabase подключен. Не забудь разрешить redirect URL в Supabase Dashboard.";
-    el.authGateStatus.textContent = "Войди через Google или VK, чтобы пользоваться Fenegram.";
+    el.authGateStatus.textContent = "Войди по почте, через Google или VK, чтобы пользоваться Fenegram.";
     el.handleStatus.textContent = "Сначала войди в аккаунт.";
     return;
   }
@@ -494,6 +530,92 @@ async function signInWithProvider(provider) {
   if (error) addSystem(`Не удалось начать вход: ${error.message}`);
 }
 
+async function signInWithEmail(event, source) {
+  event?.preventDefault?.();
+  const credentials = emailCredentials(source);
+  if (!credentials) return;
+  const { email, password } = credentials;
+  const { error } = await state.authClient.auth.signInWithPassword({ email, password });
+  if (error) {
+    setEmailAuthStatus(`Не удалось войти: ${friendlyAuthError(error)}`, source);
+    return;
+  }
+  syncEmailInputs(email, "");
+  setEmailAuthStatus("Вход выполнен.", source);
+}
+
+async function signUpWithEmail(source) {
+  const credentials = emailCredentials(source);
+  if (!credentials) return;
+  const { email, password } = credentials;
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const { data, error } = await state.authClient.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (error) {
+    setEmailAuthStatus(`Не удалось зарегистрироваться: ${friendlyAuthError(error)}`, source);
+    return;
+  }
+  syncEmailInputs(email, "");
+  if (data.session) {
+    setEmailAuthStatus("Аккаунт создан, вход выполнен. Теперь выбери @ник.", source);
+  } else {
+    setEmailAuthStatus("Аккаунт создан. Проверь почту и подтверди регистрацию.", source);
+  }
+}
+
+function emailCredentials(source) {
+  if (!state.authClient) {
+    setEmailAuthStatus("Supabase еще не подключился. Обнови страницу и попробуй снова.", source);
+    return null;
+  }
+  const emailInput = source === "gate" ? el.gateEmailInput : el.emailInput;
+  const passwordInput = source === "gate" ? el.gatePasswordInput : el.passwordInput;
+  const email = emailInput.value.trim().toLowerCase();
+  const password = passwordInput.value;
+  syncEmailInputs(email, password);
+  if (!email || !email.includes("@")) {
+    setEmailAuthStatus("Введи почту.", source);
+    emailInput.focus();
+    return null;
+  }
+  if (!password || password.length < 6) {
+    setEmailAuthStatus("Пароль должен быть минимум 6 символов.", source);
+    passwordInput.focus();
+    return null;
+  }
+  return { email, password };
+}
+
+function syncEmailInputs(email, password) {
+  el.emailInput.value = email || "";
+  el.gateEmailInput.value = email || "";
+  if (password !== undefined) {
+    el.passwordInput.value = password;
+    el.gatePasswordInput.value = password;
+  }
+}
+
+function setEmailAuthStatus(message, source) {
+  if (source === "gate") {
+    el.authGateStatus.textContent = message;
+  } else {
+    el.authSettingsStatus.textContent = message;
+  }
+}
+
+function friendlyAuthError(error) {
+  const message = error?.message || String(error || "");
+  const lower = message.toLowerCase();
+  if (lower.includes("invalid login credentials")) return "неверная почта или пароль.";
+  if (lower.includes("email not confirmed")) return "почта еще не подтверждена. Проверь письмо.";
+  if (lower.includes("user already registered") || lower.includes("already registered")) return "этот email уже зарегистрирован. Попробуй войти.";
+  if (lower.includes("password")) return "проверь пароль, минимум 6 символов.";
+  return message;
+}
+
 async function signOut() {
   if (!state.authClient) return;
   const { error } = await state.authClient.auth.signOut();
@@ -520,14 +642,14 @@ function refreshAppAccess() {
   document.body.classList.toggle("locked", !allowed);
   document.body.classList.toggle("main-channel-available", false);
   el.authGate.hidden = allowed;
-  el.channelTab.hidden = !mainAllowed;
-  el.channelTab.disabled = !mainAllowed;
+  el.channelTab.hidden = true;
+  el.channelTab.disabled = true;
   el.directTab.disabled = !allowed;
   el.systemTab.disabled = !allowed;
   el.voice.disabled = !allowed || state.voiceConnecting;
-  el.form.querySelector("button").disabled = !mainAllowed || !state.joined;
-  el.message.disabled = !mainAllowed || !state.joined;
-  if (!mainAllowed && !el.channelView.hidden) showView("direct");
+  el.form.querySelector("button").disabled = true;
+  el.message.disabled = true;
+  if (!el.channelView.hidden) showView("direct");
   renderAccount();
   renderDirectChatList();
   renderGroupList();
@@ -1483,6 +1605,21 @@ function updateCallButtonLabel() {
   }
 }
 
+function syncCallParticipantsPlacement() {
+  if (!el.callParticipantsPanel || !el.callPanel || !el.sidebar || !el.sidebarNav) return;
+  const mobile = window.matchMedia("(max-width: 860px)").matches;
+  if (mobile) {
+    const controls = el.callPanel.querySelector(".call-controls");
+    if (el.callParticipantsPanel.parentElement !== el.callPanel) {
+      el.callPanel.insertBefore(el.callParticipantsPanel, controls);
+    }
+    return;
+  }
+  if (el.callParticipantsPanel.parentElement !== el.sidebar) {
+    el.sidebar.appendChild(el.callParticipantsPanel);
+  }
+}
+
 function openConversationModal(mode) {
   const isDirect = mode === "direct-search";
   const isCreate = mode === "group-create";
@@ -1930,7 +2067,7 @@ async function toggleVoice() {
     await startVoice();
   } catch (error) {
     stopVoice();
-    addSystem(`Не удалось включить голос LiveKit: ${friendlyLiveKitError(error)}`);
+    addSystem(`Не удалось включить голос ${voiceEngineLabel()}: ${friendlyVoiceError(error)}`);
   } finally {
     state.voiceConnecting = false;
     updateVoiceControls();
@@ -1938,6 +2075,11 @@ async function toggleVoice() {
 }
 
 async function startVoice() {
+  if (VOICE_ENGINE === "photon") return startPhotonVoice();
+  return startLiveKitVoice();
+}
+
+async function startLiveKitVoice() {
   if (!window.LivekitClient) {
     throw new Error("библиотека LiveKit не загрузилась");
   }
@@ -1994,6 +2136,268 @@ function currentVoiceRoom() {
     return { name: `dm-${pair}`, label: `DM call with ${displayProfile(directProfile)}` };
   }
   return { name: ROOM_NAME, label: "main channel" };
+}
+
+async function startPhotonVoice() {
+  if (!window.Photon) {
+    throw new Error("библиотека Photon не загрузилась");
+  }
+  const appId = el.appId.value.trim();
+  if (!appId) {
+    throw new Error("Photon App ID не найден");
+  }
+
+  const voiceRoom = currentVoiceRoom();
+  state.voiceRoomName = voiceRoom.name;
+  state.voiceRoomLabel = `${voiceRoom.label} (Photon)`;
+  addSystem("Подключение к голосу через Photon...");
+
+  state.rawStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: el.mic.value ? { exact: el.mic.value } : undefined,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+  state.localOutputTrack = state.rawStream.getAudioTracks()[0] || null;
+  if (!state.localOutputTrack) throw new Error("микрофонный трек не создан");
+  state.localPublication = {
+    async mute() {
+      if (state.localOutputTrack) state.localOutputTrack.enabled = false;
+    },
+    async unmute() {
+      if (state.localOutputTrack) state.localOutputTrack.enabled = true;
+    },
+  };
+
+  await connectPhotonVoice(voiceRoom.name);
+  state.voiceEnabled = true;
+  state.voiceConnecting = false;
+  state.micMuted = false;
+  state.deafened = false;
+  updateVoiceControls();
+  await refreshDevices();
+  renderMembers();
+  addSystem("Голос включен через Photon. Это тестовый режим без LiveKit.");
+}
+
+function connectPhotonVoice(roomName) {
+  return new Promise((resolve, reject) => {
+    const Photon = window.Photon;
+    const LBC = Photon.LoadBalancing.LoadBalancingClient;
+    const client = new LBC(Photon.ConnectionProtocol.Wss, el.appId.value.trim(), APP_VERSION);
+    const photonRoom = photonVoiceRoomName(roomName);
+    const timer = window.setTimeout(() => {
+      reject(new Error("Photon voice timeout"));
+      try {
+        client.disconnect();
+      } catch {}
+    }, 20000);
+
+    state.photonVoiceClient = client;
+    client.myActor().setName(fenegramDisplayName());
+
+    client.onStateChange = function (clientState) {
+      if (clientState === LBC.State.JoinedLobby) {
+        this.joinRoom(photonRoom, { createIfNotExists: true }, { maxPlayers: 16, isVisible: true, isOpen: true });
+      }
+      if (clientState === LBC.State.Joined) {
+        window.clearTimeout(timer);
+        state.photonVoiceJoined = true;
+        state.localVoiceIdentity = photonVoiceIdentity(myPhotonVoiceActorNr());
+        state.voiceParticipants.set(state.localVoiceIdentity, fenegramDisplayName());
+        syncPhotonVoiceActors();
+        resolve();
+        window.setTimeout(createMissingPhotonOffers, 300);
+      }
+      if (clientState === LBC.State.Disconnected) {
+        window.clearTimeout(timer);
+        if (state.voiceEnabled && VOICE_ENGINE === "photon") addSystem("Голос Photon отключен.");
+        cleanupVoice();
+      }
+    };
+
+    client.onError = function (code, message) {
+      window.clearTimeout(timer);
+      reject(new Error(`${code} ${message || ""}`.trim()));
+    };
+
+    client.onActorJoin = function (actor) {
+      rememberPhotonVoiceActor(actor);
+      renderMembers();
+      createMissingPhotonOffers();
+    };
+
+    client.onActorLeave = function (actor) {
+      removePhotonPeer(actor.actorNr);
+      state.voiceParticipants.delete(photonVoiceIdentity(actor.actorNr));
+      renderMembers();
+    };
+
+    client.onEvent = function (code, data, actorNr) {
+      if (code === EVENT_VOICE_SIGNAL) handlePhotonVoiceSignal(data, actorNr).catch((error) => {
+        addSystem(`Ошибка Photon WebRTC: ${error.message}`);
+      });
+    };
+
+    client.connectToRegionMaster(el.region.value);
+  });
+}
+
+function photonVoiceRoomName(roomName) {
+  return `voice-${String(roomName || ROOM_NAME).replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 180)}`;
+}
+
+function syncPhotonVoiceActors() {
+  const client = state.photonVoiceClient;
+  if (!client?.myRoomActorsArray) return;
+  for (const actor of client.myRoomActorsArray()) rememberPhotonVoiceActor(actor);
+  renderMembers();
+}
+
+function rememberPhotonVoiceActor(actor) {
+  if (!actor?.actorNr) return;
+  const identity = photonVoiceIdentity(actor.actorNr);
+  const name = actor.actorNr === myPhotonVoiceActorNr() ? fenegramDisplayName() : actor.name || `User ${actor.actorNr}`;
+  state.voiceParticipants.set(identity, name);
+}
+
+function createMissingPhotonOffers() {
+  const client = state.photonVoiceClient;
+  if (!state.photonVoiceJoined || !client?.myRoomActorsArray) return;
+  const mine = myPhotonVoiceActorNr();
+  for (const actor of client.myRoomActorsArray()) {
+    if (!actor?.actorNr || actor.actorNr === mine) continue;
+    rememberPhotonVoiceActor(actor);
+    if (mine > actor.actorNr && !state.photonVoicePeers.has(actor.actorNr)) {
+      createPhotonOffer(actor.actorNr).catch((error) => addSystem(`Не удалось позвать ${actor.name || actor.actorNr}: ${error.message}`));
+    }
+  }
+  renderMembers();
+}
+
+async function createPhotonOffer(actorNr) {
+  const peer = ensurePhotonPeer(actorNr);
+  const offer = await peer.pc.createOffer();
+  await peer.pc.setLocalDescription(offer);
+  sendPhotonVoiceSignal(actorNr, { type: "offer", description: peer.pc.localDescription });
+}
+
+function ensurePhotonPeer(actorNr) {
+  const existing = state.photonVoicePeers.get(actorNr);
+  if (existing) return existing;
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const identity = photonVoiceIdentity(actorNr);
+  const name = state.voiceParticipants.get(identity) || `User ${actorNr}`;
+  const peer = { actorNr, identity, name, pc };
+  state.photonVoicePeers.set(actorNr, peer);
+
+  for (const track of state.rawStream?.getTracks?.() || []) {
+    pc.addTrack(track, state.rawStream);
+  }
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate) sendPhotonVoiceSignal(actorNr, { type: "candidate", candidate: event.candidate });
+  };
+  pc.ontrack = (event) => {
+    if (event.track.kind === "audio") attachPhotonAudioTrack(actorNr, event.track, event.streams?.[0]);
+  };
+  pc.onconnectionstatechange = () => {
+    if (["failed", "disconnected", "closed"].includes(pc.connectionState)) renderMembers();
+  };
+  return peer;
+}
+
+async function handlePhotonVoiceSignal(data, actorNr) {
+  if (!data || data.room !== state.voiceRoomName) return;
+  const mine = myPhotonVoiceActorNr();
+  if (data.to && data.to !== mine) return;
+  if (actorNr === mine || data.from === mine) return;
+  const from = data.from || actorNr;
+  if (!from) return;
+  if (data.fromName) state.voiceParticipants.set(photonVoiceIdentity(from), data.fromName);
+  const peer = ensurePhotonPeer(from);
+
+  if (data.type === "offer" && data.description) {
+    await peer.pc.setRemoteDescription(new RTCSessionDescription(data.description));
+    const answer = await peer.pc.createAnswer();
+    await peer.pc.setLocalDescription(answer);
+    sendPhotonVoiceSignal(from, { type: "answer", description: peer.pc.localDescription });
+  }
+  if (data.type === "answer" && data.description) {
+    await peer.pc.setRemoteDescription(new RTCSessionDescription(data.description));
+  }
+  if (data.type === "candidate" && data.candidate) {
+    await peer.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  }
+  renderMembers();
+}
+
+function sendPhotonVoiceSignal(to, payload) {
+  if (!state.photonVoiceClient?.isJoinedToRoom?.()) return;
+  state.photonVoiceClient.raiseEvent(
+    EVENT_VOICE_SIGNAL,
+    {
+      ...payload,
+      room: state.voiceRoomName,
+      from: myPhotonVoiceActorNr(),
+      fromName: fenegramDisplayName(),
+      to,
+    },
+    { receivers: window.Photon.LoadBalancing.Constants.ReceiverGroup.All }
+  );
+}
+
+function attachPhotonAudioTrack(actorNr, track, stream) {
+  const identity = photonVoiceIdentity(actorNr);
+  const name = state.voiceParticipants.get(identity) || `User ${actorNr}`;
+  const key = `photon-audio-${actorNr}-${track.id}`;
+  removeAudioTrack(key);
+  const audio = document.createElement("audio");
+  audio.autoplay = true;
+  audio.playsInline = true;
+  audio.srcObject = stream || new MediaStream([track]);
+  audio.dataset.participantIdentity = identity;
+  audio.dataset.participantName = name;
+  audio.muted = state.deafened;
+  document.body.appendChild(audio);
+  state.audioElements.set(key, audio);
+  applyAudioOutput(audio);
+  updateOneVolume(name, audio);
+  audio.play().catch(() => {});
+  renderMembers();
+}
+
+function removePhotonPeer(actorNr) {
+  const peer = state.photonVoicePeers.get(actorNr);
+  if (peer) {
+    peer.pc.close();
+    state.photonVoicePeers.delete(actorNr);
+  }
+  removeParticipantAudio(photonVoiceIdentity(actorNr));
+}
+
+function myPhotonVoiceActorNr() {
+  return state.photonVoiceClient?.myActor?.()?.actorNr;
+}
+
+function photonVoiceIdentity(actorNr) {
+  return `photon-${actorNr || "local"}`;
+}
+
+function cleanupPhotonVoiceTransport() {
+  for (const actorNr of [...state.photonVoicePeers.keys()]) removePhotonPeer(actorNr);
+  state.photonVoicePeers.clear();
+  const client = state.photonVoiceClient;
+  state.photonVoiceClient = null;
+  state.photonVoiceJoined = false;
+  state.localVoiceIdentity = "";
+  if (client?.isConnectedToMaster?.() || client?.isJoinedToRoom?.()) {
+    try {
+      client.disconnect();
+    } catch {}
+  }
 }
 
 function bindLiveKitEvents(room) {
@@ -2107,6 +2511,11 @@ function stopVoice() {
     room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
     room.disconnect();
   }
+  if (state.photonVoiceClient) {
+    try {
+      state.photonVoiceClient.disconnect();
+    } catch {}
+  }
   cleanupVoice();
 }
 
@@ -2120,6 +2529,7 @@ function cleanupVoice() {
   el.voice.textContent = "Войти в голос";
   state.voiceParticipants.clear();
   state.speakingNames.clear();
+  cleanupPhotonVoiceTransport();
   for (const audio of state.audioElements.values()) audio.remove();
   state.audioElements.clear();
   closeMediaViewer();
@@ -2238,8 +2648,8 @@ function updateVoiceControls() {
   el.voice.disabled = locked || state.voiceConnecting;
   el.mute.disabled = locked || state.voiceConnecting || !state.voiceEnabled || state.deafened;
   el.deafen.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
-  el.camera.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
-  el.screenShare.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
+  el.camera.disabled = locked || state.voiceConnecting || !state.voiceEnabled || VOICE_ENGINE === "photon";
+  el.screenShare.disabled = locked || state.voiceConnecting || !state.voiceEnabled || VOICE_ENGINE === "photon";
   el.voice.textContent = state.voiceConnecting ? "Подключение..." : state.voiceEnabled ? "Выйти из голоса" : "Войти в голос";
   el.mute.textContent = state.micMuted ? "Включить микрофон" : "Выключить микрофон";
   el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
@@ -2294,7 +2704,31 @@ function friendlyLiveKitError(error) {
   return message;
 }
 
+function friendlyVoiceError(error) {
+  if (VOICE_ENGINE === "photon") return friendlyPhotonVoiceError(error);
+  return friendlyLiveKitError(error);
+}
+
+function friendlyPhotonVoiceError(error) {
+  const message = error?.message || String(error || "");
+  const lower = message.toLowerCase();
+  if (error?.name === "NotAllowedError") return "браузер не дал доступ к микрофону.";
+  if (lower.includes("timeout")) return "Photon слишком долго подключался. Проверь регион, VPN или интернет.";
+  if (lower.includes("3001") || lower.includes("3004") || lower.includes("nameserver")) {
+    return "Photon не смог подключиться к NameServer. Похоже на блокировку или плохой маршрут до Photon.";
+  }
+  return message;
+}
+
+function voiceEngineLabel() {
+  return VOICE_ENGINE === "photon" ? "Photon" : "LiveKit";
+}
+
 async function toggleCamera() {
+  if (VOICE_ENGINE === "photon") {
+    addSystem("Камера в Photon-тесте пока выключена. Сейчас проверяем именно звук.");
+    return;
+  }
   const room = state.livekitRoom;
   if (!room) return;
   try {
@@ -2313,6 +2747,10 @@ async function toggleCamera() {
 }
 
 async function toggleScreenShare() {
+  if (VOICE_ENGINE === "photon") {
+    addSystem("Демонстрация экрана в Photon-тесте пока выключена. Сейчас проверяем именно звук.");
+    return;
+  }
   const room = state.livekitRoom;
   if (!room) return;
   try {
@@ -2660,7 +3098,7 @@ function renderMembers() {
   }
   for (const [identity, name] of state.voiceParticipants) {
     if (!renderedNames.has(name)) {
-      const isLocal = identity === state.livekitRoom?.localParticipant?.identity || name === el.name.value.trim();
+      const isLocal = identity === state.livekitRoom?.localParticipant?.identity || identity === state.localVoiceIdentity || name === el.name.value.trim();
       renderMemberRow(name, isLocal, renderedNames);
     }
   }
@@ -2669,6 +3107,7 @@ function renderMembers() {
 
 function renderCallParticipants() {
   if (!el.callParticipantsPanel || !el.callParticipantsList) return;
+  syncCallParticipantsPlacement();
   const rows = currentCallParticipantRows();
   const hasVoice = state.voiceEnabled && rows.length > 0;
   el.callParticipantsPanel.hidden = !hasVoice;
@@ -2705,12 +3144,12 @@ function currentCallParticipantRows() {
   const rows = [];
   const seen = new Set();
   for (const [identity, name] of state.voiceParticipants) {
-    const isLocal = identity === state.livekitRoom?.localParticipant?.identity;
+    const isLocal = identity === state.livekitRoom?.localParticipant?.identity || identity === state.localVoiceIdentity;
     rows.push({ identity, name, isLocal });
     seen.add(identity);
     seen.add(name);
   }
-  const localIdentity = state.livekitRoom?.localParticipant?.identity || "local";
+  const localIdentity = state.livekitRoom?.localParticipant?.identity || state.localVoiceIdentity || "local";
   if (!seen.has(localIdentity)) {
     const localName = fenegramDisplayName();
     rows.unshift({ identity: localIdentity, name: localName, isLocal: true });
@@ -2835,6 +3274,7 @@ function voiceLabel(name, isLocal) {
 
 function participantName(participant) {
   if (isLocalLiveKitParticipant(participant)) return fenegramDisplayName();
+  if (participant?.identity === state.localVoiceIdentity) return fenegramDisplayName();
   return participant?.name || participant?.identity || "Участник";
 }
 

@@ -21,6 +21,14 @@
         </div>
         <p id="authGateStatus" class="device-test-status">Войди через аккаунт, потом выбери свой @ник.</p>
         <div class="account-actions">
+          <form id="gateEmailAuthForm" class="email-auth-form">
+            <input id="gateEmailInput" type="email" autocomplete="email" placeholder="Почта" />
+            <input id="gatePasswordInput" type="password" autocomplete="current-password" placeholder="Пароль" minlength="6" />
+            <div class="email-auth-actions">
+              <button id="gateEmailLoginBtn" type="submit">Войти</button>
+              <button id="gateEmailRegisterBtn" type="button">Регистрация</button>
+            </div>
+          </form>
           <button id="gateGoogleLoginBtn" type="button">Войти через Google</button>
           <button id="gateVkLoginBtn" type="button">Войти через VK</button>
           <button id="gateLogoutBtn" type="button" hidden>Выйти из аккаунта</button>
@@ -44,7 +52,7 @@
           <div>
             <h1>Fenegram</h1>
             <p>личные сообщения и группы</p>
-            <p class="photon-credit">(текст: Supabase, звонки: LiveKit)</p>
+            <p class="photon-credit">(текст: Supabase, звонки: Photon-тест)</p>
           </div>
         </div>
 
@@ -183,6 +191,14 @@
               <div class="section-title">Аккаунт Fenegram</div>
               <div id="accountStatus" class="account-status">Вход не настроен</div>
               <div class="account-actions">
+                <form id="emailAuthForm" class="email-auth-form">
+                  <input id="emailInput" type="email" autocomplete="email" placeholder="Почта" />
+                  <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Пароль" minlength="6" />
+                  <div class="email-auth-actions">
+                    <button id="emailLoginBtn" type="submit">Войти</button>
+                    <button id="emailRegisterBtn" type="button">Регистрация</button>
+                  </div>
+                </form>
                 <button id="googleLoginBtn" type="button">Войти через Google</button>
                 <button id="vkLoginBtn" type="button">Войти через VK</button>
                 <button id="logoutBtn" type="button" hidden>Выйти из аккаунта</button>
