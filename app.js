@@ -88,6 +88,7 @@ const el = {
   badge: document.querySelector("#connectionBadge"),
   messages: document.querySelector("#messages"),
   directMessages: document.querySelector("#directMessages"),
+  conversationTitle: document.querySelector("#conversationTitle"),
   directStatus: document.querySelector("#directStatus"),
   directUsers: document.querySelector("#directUsersList"),
   directForm: document.querySelector("#directMessageForm"),
@@ -156,6 +157,8 @@ const el = {
   conversationModalTitle: document.querySelector("#conversationModalTitle"),
   conversationModalText: document.querySelector("#conversationModalText"),
   mobileBackChats: document.querySelector("#mobileBackChatsBtn"),
+  callToggle: document.querySelector("#callToggleBtn"),
+  callPanel: document.querySelector("#callPanel"),
   participants: document.querySelector("#participantsBtn"),
   participantsModal: document.querySelector("#participantsModal"),
   closeParticipantsModal: document.querySelector("#closeParticipantsModalBtn"),
@@ -233,6 +236,7 @@ el.conversationPrimaryAction.addEventListener("click", () => {
 });
 el.closeConversationModal.addEventListener("click", closeConversationModal);
 el.mobileBackChats.addEventListener("click", backToConversationList);
+el.callToggle.addEventListener("click", toggleCallPanel);
 el.participants.addEventListener("click", openParticipantsModal);
 el.closeParticipantsModal.addEventListener("click", closeParticipantsModal);
 el.conversationModal.addEventListener("click", (event) => {
@@ -1403,6 +1407,7 @@ function openGroupChat(group) {
 
 function showConversationPanel(panel) {
   state.conversationPanel = panel;
+  el.conversationTitle.textContent = panel === "group" ? "Группы" : "Личные сообщения";
   el.directPanel.hidden = panel !== "direct";
   el.groupPanel.hidden = panel !== "group";
   el.directMode.classList.toggle("active", panel === "direct");
@@ -1410,10 +1415,12 @@ function showConversationPanel(panel) {
   if (panel === "direct" && state.selectedConversationType === "group") {
     state.selectedConversationType = null;
     state.selectedGroupId = null;
+    el.callPanel.hidden = true;
   }
   if (panel === "group" && state.selectedConversationType === "direct") {
     state.selectedConversationType = null;
     state.selectedDirectUserId = null;
+    el.callPanel.hidden = true;
   }
   renderDirectChatList();
   renderGroupList();
@@ -1425,6 +1432,7 @@ function backToConversationList() {
   state.selectedConversationType = null;
   state.selectedDirectUserId = null;
   state.selectedGroupId = null;
+  el.callPanel.hidden = true;
   renderDirectChatList();
   renderGroupList();
   renderDirectChat();
@@ -1437,6 +1445,29 @@ function updateConversationLayoutState() {
   el.directView.classList.toggle("no-conversation", !open);
   el.mobileBackChats.hidden = !open;
   el.participants.disabled = !open;
+  el.callToggle.disabled = !open;
+  if (!open) el.callPanel.hidden = true;
+  updateCallButtonLabel();
+}
+
+function toggleCallPanel() {
+  if (!state.selectedConversationType) return;
+  el.callPanel.hidden = !el.callPanel.hidden;
+  updateCallButtonLabel();
+}
+
+function updateCallButtonLabel() {
+  if (!el.callToggle) return;
+  if (state.voiceEnabled) {
+    el.callToggle.textContent = "Звонок идет";
+    el.callToggle.dataset.mobileLabel = "В эфире";
+  } else if (!el.callPanel.hidden) {
+    el.callToggle.textContent = "Скрыть звонок";
+    el.callToggle.dataset.mobileLabel = "Скрыть";
+  } else {
+    el.callToggle.textContent = "Позвонить";
+    el.callToggle.dataset.mobileLabel = "Звонок";
+  }
 }
 
 function openConversationModal(mode) {
@@ -1498,6 +1529,12 @@ async function renderGroupParticipants() {
   el.participantsModalText.textContent = `ID группы: ${group.id}`;
   const members = await loadGroupMembers(group.id, true);
   renderParticipantRows(members);
+  const leave = document.createElement("button");
+  leave.type = "button";
+  leave.className = "danger-action";
+  leave.textContent = "Выйти из группы";
+  leave.addEventListener("click", leaveSelectedGroup);
+  el.participantsList.appendChild(leave);
 }
 
 function renderParticipantRows(rows) {
@@ -1538,6 +1575,33 @@ function isProfileInVoice(profile) {
     displayProfile(profile),
   ].filter(Boolean));
   return [...state.voiceParticipants.values()].some((name) => labels.has(name));
+}
+
+async function leaveSelectedGroup() {
+  const groupId = state.selectedGroupId;
+  if (!groupId || !state.authClient || !state.currentProfile) return;
+  const group = state.groups.get(groupId);
+  const { error } = await state.authClient
+    .from("group_members")
+    .delete()
+    .eq("group_id", groupId)
+    .eq("user_id", state.currentProfile.id);
+  if (error) {
+    addSystem(`Не удалось выйти из группы: ${friendlyDatabaseError(error)}`);
+    return;
+  }
+  closeParticipantsModal();
+  state.groups.delete(groupId);
+  state.groupMemberships.delete(groupId);
+  state.groupMembers.delete(groupId);
+  state.groupMessagesStore = state.groupMessagesStore.filter((message) => message.group_id !== groupId);
+  state.selectedGroupId = null;
+  state.selectedConversationType = null;
+  if (state.voiceEnabled && state.voiceRoomName === `group-${groupId}`) stopVoice();
+  renderGroupList();
+  renderDirectChat();
+  updateConversationLayoutState();
+  addSystem(`Ты вышел из группы${group?.name ? ` ${group.name}` : ""}.`);
 }
 
 function renderGroupList() {
@@ -2165,6 +2229,11 @@ function updateVoiceControls() {
   el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
   el.camera.textContent = state.cameraEnabled ? "Выключить камеру" : "Включить камеру";
   el.screenShare.textContent = state.screenShareEnabled ? "Остановить демонстрацию" : "Показать экран";
+  el.voice.dataset.mobileLabel = state.voiceConnecting ? "..." : state.voiceEnabled ? "Выйти" : "Войти";
+  el.mute.dataset.mobileLabel = state.micMuted ? "Вкл мик" : "Мик";
+  el.deafen.dataset.mobileLabel = state.deafened ? "Вкл звук" : "Звук";
+  el.camera.dataset.mobileLabel = state.cameraEnabled ? "Без кам" : "Камера";
+  el.screenShare.dataset.mobileLabel = state.screenShareEnabled ? "Стоп" : "Экран";
   if (state.voiceConnecting) {
     el.voiceStatus.textContent = "Подключение к голосовому каналу...";
   } else if (!state.voiceEnabled) {
@@ -2176,6 +2245,7 @@ function updateVoiceControls() {
   } else {
     el.voiceStatus.textContent = `В голосовом канале: ${state.voiceRoomLabel}`;
   }
+  updateCallButtonLabel();
 }
 
 function friendlyLiveKitError(error) {

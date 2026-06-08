@@ -174,6 +174,12 @@ with check (
   )
 );
 
+drop policy if exists "users can leave groups" on public.group_members;
+create policy "users can leave groups"
+on public.group_members for delete
+to authenticated
+using (user_id = auth.uid());
+
 drop policy if exists "members can read group messages" on public.group_messages;
 create policy "members can read group messages"
 on public.group_messages for select
