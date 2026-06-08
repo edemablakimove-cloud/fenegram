@@ -976,6 +976,7 @@ function fillDeviceSelect(select, devices, fallback) {
 }
 
 function showView(view) {
+  if (view === "channel") view = "direct";
   const settings = view === "settings";
   const system = view === "system";
   const direct = view === "direct";
@@ -1529,6 +1530,7 @@ function renderDirectParticipants() {
   const rows = [{ profile: state.currentProfile, role: "ты" }];
   if (profile) rows.push({ profile, role: "собеседник" });
   renderParticipantRows(rows);
+  renderCallParticipants();
 }
 
 async function renderGroupParticipants() {
@@ -1541,6 +1543,7 @@ async function renderGroupParticipants() {
   el.participantsModalText.textContent = `ID группы: ${group.id}`;
   const members = await loadGroupMembers(group.id, true);
   renderParticipantRows(members);
+  renderCallParticipants();
   const leave = document.createElement("button");
   leave.type = "button";
   leave.className = "danger-action";
@@ -2666,13 +2669,14 @@ function renderMembers() {
 
 function renderCallParticipants() {
   if (!el.callParticipantsPanel || !el.callParticipantsList) return;
-  const hasVoice = state.voiceEnabled && state.voiceParticipants.size > 0;
+  const rows = currentCallParticipantRows();
+  const hasVoice = state.voiceEnabled && rows.length > 0;
   el.callParticipantsPanel.hidden = !hasVoice;
   el.callParticipantsList.innerHTML = "";
   if (!hasVoice) return;
-  for (const [identity, name] of state.voiceParticipants) {
-    const isLocal = identity === state.livekitRoom?.localParticipant?.identity;
-    const media = mediaEntriesForParticipant(identity);
+  for (const rowData of rows) {
+    const { identity, name, isLocal } = rowData;
+    const media = mediaEntriesForParticipant(identity, name);
     const row = document.createElement("button");
     row.type = "button";
     row.className = `call-participant${media.length ? " has-media" : ""}${state.speakingNames.has(name) ? " speaking" : ""}`;
@@ -2696,6 +2700,42 @@ function renderCallParticipants() {
   }
 }
 
+function currentCallParticipantRows() {
+  if (!state.voiceEnabled) return [];
+  const rows = [];
+  const seen = new Set();
+  for (const [identity, name] of state.voiceParticipants) {
+    const isLocal = identity === state.livekitRoom?.localParticipant?.identity;
+    rows.push({ identity, name, isLocal });
+    seen.add(identity);
+    seen.add(name);
+  }
+  const localIdentity = state.livekitRoom?.localParticipant?.identity || "local";
+  if (!seen.has(localIdentity)) {
+    const localName = fenegramDisplayName();
+    rows.unshift({ identity: localIdentity, name: localName, isLocal: true });
+    seen.add(localIdentity);
+    seen.add(localName);
+  }
+  if (state.selectedConversationType === "direct") {
+    const profile = state.directProfiles.get(state.selectedDirectUserId);
+    if (profile) {
+      const name = displayProfile(profile);
+      if (!seen.has(profile.id) && !seen.has(name)) rows.push({ identity: profile.id, name, isLocal: false });
+    }
+  }
+  if (state.selectedConversationType === "group") {
+    const members = state.groupMembers.get(state.selectedGroupId) || [];
+    for (const member of members) {
+      const profile = member.profile;
+      if (!profile) continue;
+      const name = displayProfile(profile);
+      if (!seen.has(profile.id) && !seen.has(name)) rows.push({ identity: profile.id, name, isLocal: profile.id === state.currentProfile?.id });
+    }
+  }
+  return rows;
+}
+
 function createMediaIndicator(type) {
   const indicator = document.createElement("span");
   indicator.className = `media-indicator ${type}`;
@@ -2704,9 +2744,9 @@ function createMediaIndicator(type) {
   return indicator;
 }
 
-function mediaEntriesForParticipant(identity) {
+function mediaEntriesForParticipant(identity, fallbackName) {
   return [...state.videoTiles.entries()]
-    .filter(([, entry]) => entry.participant?.identity === identity)
+    .filter(([, entry]) => entry.participant?.identity === identity || (fallbackName && participantName(entry.participant) === fallbackName))
     .sort((a, b) => Number(videoEntrySource(b[1]) === "screen") - Number(videoEntrySource(a[1]) === "screen"));
 }
 
@@ -2715,7 +2755,8 @@ function videoEntrySource(entry) {
 }
 
 function openParticipantMediaViewer(identity) {
-  const [key, entry] = mediaEntriesForParticipant(identity)[0] || [];
+  const row = currentCallParticipantRows().find((item) => item.identity === identity);
+  const [key, entry] = mediaEntriesForParticipant(identity, row?.name)[0] || [];
   if (!entry) return;
   closeMediaViewer();
   const video = entry.track.attach();
