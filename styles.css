@@ -171,6 +171,88 @@ label {
   gap: 8px;
 }
 
+.call-participants-panel {
+  align-self: end;
+  margin-top: auto;
+}
+
+.call-participants-list {
+  display: grid;
+  gap: 8px;
+}
+
+.call-participant {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  border-color: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.call-participant.has-media {
+  border-color: rgba(47, 191, 143, 0.28);
+}
+
+.call-participant:not(:disabled):hover {
+  background: rgba(47, 191, 143, 0.08);
+}
+
+.call-participant:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.call-participant-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(47, 191, 143, 0.16);
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.call-participant-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.call-media-indicators {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.media-indicator {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.media-indicator.camera {
+  background: #e14c5a;
+}
+
+.media-indicator.screen {
+  background: #3178ff;
+}
+
 .nav-button {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
@@ -917,6 +999,59 @@ h2 {
   display: none;
 }
 
+.media-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 8, 12, 0.82);
+  padding: 20px;
+}
+
+.media-viewer[hidden] {
+  display: none;
+}
+
+.media-viewer-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  width: min(1100px, 96vw);
+  height: min(720px, 88vh);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #0b0e13;
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.media-viewer-card h3,
+.media-viewer-card p {
+  margin: 0;
+}
+
+.media-viewer-card p {
+  color: var(--muted);
+}
+
+.media-viewer-body {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  background: #030507;
+}
+
+.media-viewer-body video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #030507;
+}
+
 .participants-list {
   display: grid;
   gap: 8px;
@@ -1139,8 +1274,17 @@ button.avatar {
   }
 
   .app-shell {
+    height: auto;
     min-height: 100svh;
+    overflow: visible;
     padding-bottom: 72px;
+  }
+
+  .main,
+  .view {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
   }
 
   .sidebar,
@@ -1164,6 +1308,11 @@ button.avatar {
 
   .brand {
     grid-column: 1;
+  }
+
+  .call-participants-panel {
+    align-self: auto;
+    margin-top: 0;
   }
 
   .sidebar-nav {
@@ -1276,6 +1425,7 @@ button.avatar {
   .conversation-topbar {
     grid-template-columns: 1fr;
     align-items: stretch;
+    position: static;
   }
 
   .conversation-title {
@@ -1291,6 +1441,10 @@ button.avatar {
   .conversation-subtitle-row p {
     text-align: left;
     margin-inline: 0;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
   .call-toggle {
@@ -1327,13 +1481,17 @@ button.avatar {
     min-width: 0;
     padding-inline: 8px;
     font-size: 0;
+    line-height: 0;
+    overflow: hidden;
     min-height: 40px;
   }
 
   .conversation-actions > button::after {
     content: attr(data-mobile-label);
+    color: var(--text);
     font-size: 11px;
     font-weight: 700;
+    line-height: 1.1;
   }
 
   .call-panel {
@@ -1355,12 +1513,16 @@ button.avatar {
     min-height: 40px;
     padding: 0 6px;
     font-size: 0;
+    line-height: 0;
+    overflow: hidden;
   }
 
   .call-controls button::after {
     content: attr(data-mobile-label);
+    color: inherit;
     font-size: 11px;
     font-weight: 800;
+    line-height: 1.1;
   }
 
   .mobile-back-chats:not([hidden]) {
@@ -1399,7 +1561,7 @@ button.avatar {
 
   #directView.no-conversation .direct-sidebar {
     display: grid;
-    min-height: 55svh;
+    min-height: 46svh;
   }
 
   #directView.conversation-open .direct-sidebar {
@@ -1522,21 +1684,68 @@ button.avatar {
   }
 
   .conversation-topbar {
-    min-height: 116px;
+    min-height: 0;
+    padding: 10px;
   }
 
   .conversation-tabs {
     gap: 4px;
   }
 
-  .conversation-tabs button,
-  .conversation-actions > button {
+  .conversation-tabs button {
     min-height: 38px;
     font-size: 12px;
   }
 
+  .conversation-actions > button {
+    min-height: 38px;
+    font-size: 0;
+    line-height: 0;
+    padding-inline: 6px;
+  }
+
+  .conversation-actions > button::after {
+    font-size: 11px;
+    line-height: 1.1;
+  }
+
+  .conversation-subtitle-row {
+    grid-template-columns: minmax(0, 1fr) 78px;
+  }
+
+  .call-toggle {
+    width: 78px;
+    font-size: 0;
+    line-height: 0;
+  }
+
+  .call-toggle::after {
+    font-size: 11px;
+    line-height: 1.1;
+  }
+
   .direct-sidebar {
     padding: 12px;
+  }
+
+  .direct-user-button {
+    min-height: 48px;
+    padding: 8px;
+  }
+
+  .call-participants-panel {
+    padding: 8px;
+  }
+
+  .call-participant {
+    min-height: 42px;
+    grid-template-columns: 30px minmax(0, 1fr) auto 14px;
+    gap: 6px;
+  }
+
+  .call-participant-avatar {
+    width: 30px;
+    height: 30px;
   }
 
   .settings-content {
@@ -1563,6 +1772,16 @@ button.avatar {
 
   .modal-card {
     padding: 18px;
+  }
+
+  .media-viewer {
+    padding: 10px;
+  }
+
+  .media-viewer-card {
+    width: 100%;
+    height: 82svh;
+    padding: 12px;
   }
 
   .message {

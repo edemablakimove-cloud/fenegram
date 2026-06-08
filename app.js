@@ -37,6 +37,7 @@ const state = {
   cameraEnabled: false,
   screenShareEnabled: false,
   videoTiles: new Map(),
+  mediaViewerVideo: null,
   seenMessageIds: new Set(),
   clientId: "",
   profiles: new Map(),
@@ -59,7 +60,7 @@ const state = {
   selectedGroupId: null,
   groupChannel: null,
   voiceRoomName: ROOM_NAME,
-  voiceRoomLabel: "Главный канал",
+  voiceRoomLabel: "Звонок",
   conversationPanel: "direct",
 };
 
@@ -99,6 +100,8 @@ const el = {
   form: document.querySelector("#messageForm"),
   message: document.querySelector("#messageInput"),
   members: document.querySelector("#membersList"),
+  callParticipantsPanel: document.querySelector("#callParticipantsPanel"),
+  callParticipantsList: document.querySelector("#callParticipantsList"),
   mic: document.querySelector("#micSelect"),
   speaker: document.querySelector("#speakerSelect"),
   cameraSelect: document.querySelector("#cameraSelect"),
@@ -165,6 +168,11 @@ const el = {
   participantsModalTitle: document.querySelector("#participantsModalTitle"),
   participantsModalText: document.querySelector("#participantsModalText"),
   participantsList: document.querySelector("#participantsList"),
+  mediaViewer: document.querySelector("#mediaViewerModal"),
+  closeMediaViewer: document.querySelector("#closeMediaViewerBtn"),
+  mediaViewerTitle: document.querySelector("#mediaViewerTitle"),
+  mediaViewerText: document.querySelector("#mediaViewerText"),
+  mediaViewerBody: document.querySelector("#mediaViewerBody"),
   blockDirect: document.querySelector("#blockDirectBtn"),
   userMenu: document.querySelector("#userMenu"),
   userMenuAvatar: document.querySelector("#userMenuAvatar"),
@@ -239,11 +247,15 @@ el.mobileBackChats.addEventListener("click", backToConversationList);
 el.callToggle.addEventListener("click", toggleCallPanel);
 el.participants.addEventListener("click", openParticipantsModal);
 el.closeParticipantsModal.addEventListener("click", closeParticipantsModal);
+el.closeMediaViewer.addEventListener("click", closeMediaViewer);
 el.conversationModal.addEventListener("click", (event) => {
   if (event.target === el.conversationModal) closeConversationModal();
 });
 el.participantsModal.addEventListener("click", (event) => {
   if (event.target === el.participantsModal) closeParticipantsModal();
+});
+el.mediaViewer.addEventListener("click", (event) => {
+  if (event.target === el.mediaViewer) closeMediaViewer();
 });
 el.blockDirect.addEventListener("click", toggleDirectBlock);
 el.userMenuMessage.addEventListener("click", () => {
@@ -506,7 +518,7 @@ function refreshAppAccess() {
   const allowed = canUseApp();
   const mainAllowed = canUseMainChannel();
   document.body.classList.toggle("locked", !allowed);
-  document.body.classList.toggle("main-channel-available", mainAllowed);
+  document.body.classList.toggle("main-channel-available", false);
   el.authGate.hidden = allowed;
   el.channelTab.hidden = !mainAllowed;
   el.channelTab.disabled = !mainAllowed;
@@ -2107,6 +2119,7 @@ function cleanupVoice() {
   state.speakingNames.clear();
   for (const audio of state.audioElements.values()) audio.remove();
   state.audioElements.clear();
+  closeMediaViewer();
   for (const key of state.videoTiles.keys()) removeVideoTile(key);
   if (state.rawStream) state.rawStream.getTracks().forEach((track) => track.stop());
   if (state.localOutputTrack) state.localOutputTrack.stop();
@@ -2119,7 +2132,7 @@ function cleanupVoice() {
   state.analyser = null;
   state.livekitRoom = null;
   state.voiceRoomName = ROOM_NAME;
-  state.voiceRoomLabel = "Главный канал";
+  state.voiceRoomLabel = "Звонок";
   updateVoiceControls();
   renderMembers();
 }
@@ -2324,7 +2337,8 @@ async function changeCamera() {
 }
 
 function attachVideoTrack(track, publication, participant, isLocal) {
-  const key = publication.trackSid || track.sid || `${participant.identity}-${Date.now()}`;
+  participant = participant || (isLocal ? state.livekitRoom?.localParticipant : null);
+  const key = publication.trackSid || track.sid || `${participant?.identity || "video"}-${Date.now()}`;
   removeVideoTile(key);
   const video = track.attach();
   video.autoplay = true;
@@ -2347,15 +2361,18 @@ function attachVideoTrack(track, publication, participant, isLocal) {
   el.videoGrid.appendChild(tile);
   state.videoTiles.set(key, { tile, video, track, publication, participant, isLocal });
   el.videoStage.hidden = false;
+  renderCallParticipants();
 }
 
 function removeVideoTile(key) {
   const entry = state.videoTiles.get(key);
   if (!entry) return;
+  if (state.mediaViewerVideo?.dataset.videoKey === key) closeMediaViewer();
   entry.track.detach().forEach((element) => element.remove());
   entry.tile.remove();
   state.videoTiles.delete(key);
   el.videoStage.hidden = state.videoTiles.size === 0;
+  renderCallParticipants();
 }
 
 function removeVideoTilesForPublication(publication) {
@@ -2629,6 +2646,7 @@ function syncVoiceParticipants() {
   for (const participant of room.remoteParticipants.values()) {
     state.voiceParticipants.set(participant.identity, participantName(participant));
   }
+  renderCallParticipants();
 }
 
 function renderMembers() {
@@ -2643,6 +2661,94 @@ function renderMembers() {
       renderMemberRow(name, isLocal, renderedNames);
     }
   }
+  renderCallParticipants();
+}
+
+function renderCallParticipants() {
+  if (!el.callParticipantsPanel || !el.callParticipantsList) return;
+  const hasVoice = state.voiceEnabled && state.voiceParticipants.size > 0;
+  el.callParticipantsPanel.hidden = !hasVoice;
+  el.callParticipantsList.innerHTML = "";
+  if (!hasVoice) return;
+  for (const [identity, name] of state.voiceParticipants) {
+    const isLocal = identity === state.livekitRoom?.localParticipant?.identity;
+    const media = mediaEntriesForParticipant(identity);
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `call-participant${media.length ? " has-media" : ""}${state.speakingNames.has(name) ? " speaking" : ""}`;
+    row.disabled = media.length === 0;
+    row.title = media.length ? "Открыть камеру или демонстрацию" : "Нет камеры или демонстрации";
+    const avatar = document.createElement("span");
+    avatar.className = "call-participant-avatar";
+    avatar.textContent = initialsFromName(name);
+    const text = document.createElement("span");
+    text.className = "call-participant-name";
+    text.textContent = `${name}${isLocal ? " (ты)" : ""}`;
+    const indicators = document.createElement("span");
+    indicators.className = "call-media-indicators";
+    if (media.some((entry) => videoEntrySource(entry) === "camera")) indicators.appendChild(createMediaIndicator("camera"));
+    if (media.some((entry) => videoEntrySource(entry) === "screen")) indicators.appendChild(createMediaIndicator("screen"));
+    const speaking = document.createElement("span");
+    speaking.className = `speaking-dot ${state.speakingNames.has(name) ? "active" : ""}`;
+    row.append(avatar, text, indicators, speaking);
+    row.addEventListener("click", () => openParticipantMediaViewer(identity));
+    el.callParticipantsList.appendChild(row);
+  }
+}
+
+function createMediaIndicator(type) {
+  const indicator = document.createElement("span");
+  indicator.className = `media-indicator ${type}`;
+  indicator.textContent = type === "screen" ? "Э" : "К";
+  indicator.title = type === "screen" ? "Демонстрация экрана включена" : "Камера включена";
+  return indicator;
+}
+
+function mediaEntriesForParticipant(identity) {
+  return [...state.videoTiles.entries()]
+    .filter(([, entry]) => entry.participant?.identity === identity)
+    .sort((a, b) => Number(videoEntrySource(b[1]) === "screen") - Number(videoEntrySource(a[1]) === "screen"));
+}
+
+function videoEntrySource(entry) {
+  return entry.publication?.source === window.LivekitClient?.Track?.Source?.ScreenShare ? "screen" : "camera";
+}
+
+function openParticipantMediaViewer(identity) {
+  const [key, entry] = mediaEntriesForParticipant(identity)[0] || [];
+  if (!entry) return;
+  closeMediaViewer();
+  const video = entry.track.attach();
+  video.autoplay = true;
+  video.playsInline = true;
+  video.controls = true;
+  video.muted = entry.isLocal;
+  video.dataset.videoKey = key;
+  el.mediaViewerTitle.textContent = `${participantName(entry.participant)}${entry.isLocal ? " (ты)" : ""}`;
+  el.mediaViewerText.textContent = videoEntrySource(entry) === "screen" ? "Демонстрация экрана" : "Камера";
+  el.mediaViewerBody.appendChild(video);
+  state.mediaViewerVideo = video;
+  el.mediaViewer.hidden = false;
+  video.play().catch(() => {});
+}
+
+function closeMediaViewer() {
+  if (state.mediaViewerVideo) {
+    state.mediaViewerVideo.remove();
+    state.mediaViewerVideo = null;
+  }
+  if (el.mediaViewerBody) el.mediaViewerBody.innerHTML = "";
+  if (el.mediaViewer) el.mediaViewer.hidden = true;
+}
+
+function initialsFromName(name) {
+  return String(name || "?")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "?";
 }
 
 function renderMemberRow(name, isLocal, renderedNames) {
@@ -2688,7 +2794,7 @@ function voiceLabel(name, isLocal) {
 
 function participantName(participant) {
   if (isLocalLiveKitParticipant(participant)) return fenegramDisplayName();
-  return participant.name || participant.identity || "Участник";
+  return participant?.name || participant?.identity || "Участник";
 }
 
 function memberName(actorNr) {

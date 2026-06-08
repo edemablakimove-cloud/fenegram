@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Fenegram</title>
     <meta name="theme-color" content="#15171c" />
-    <meta name="description" content="Fenegram - один общий текстовый и голосовой канал." />
+    <meta name="description" content="Fenegram - личные сообщения, группы и звонки." />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -43,21 +43,25 @@
           <div class="brand-mark">FG</div>
           <div>
             <h1>Fenegram</h1>
-            <p>один общий канал</p>
-            <p class="photon-credit">(текст: Photon, голос: LiveKit)</p>
+            <p>личные сообщения и группы</p>
+            <p class="photon-credit">(текст: Supabase, звонки: LiveKit)</p>
           </div>
         </div>
 
         <nav class="sidebar-nav" aria-label="Навигация">
-          <button id="channelTabBtn" class="nav-button active" data-mobile-label="Канал">Главный канал</button>
-          <button id="directTabBtn" class="nav-button" data-mobile-label="Чаты">Личные сообщения</button>
+          <button id="channelTabBtn" class="nav-button" data-mobile-label="Канал" hidden>Главный канал</button>
+          <button id="directTabBtn" class="nav-button active" data-mobile-label="Чаты">Личные сообщения</button>
           <button id="systemTabBtn" class="nav-button" data-mobile-label="Логи">Система</button>
           <button id="settingsTabBtn" class="nav-button" data-mobile-label="Профиль">Настройки</button>
         </nav>
+        <section id="callParticipantsPanel" class="panel call-participants-panel" hidden>
+          <div class="section-title">Участники звонка</div>
+          <div id="callParticipantsList" class="call-participants-list"></div>
+        </section>
       </aside>
 
       <section class="main">
-        <section id="channelView" class="view">
+        <section id="channelView" class="view" hidden>
           <header class="topbar">
             <div>
               <h2>Главный канал</h2>
@@ -88,7 +92,7 @@
           </section>
         </section>
 
-        <section id="directView" class="view" hidden>
+        <section id="directView" class="view">
           <header class="topbar conversation-topbar">
             <div class="conversation-title">
               <h2 id="conversationTitle">Личные сообщения</h2>
@@ -300,6 +304,15 @@
         <h3 id="participantsModalTitle">Участники</h3>
         <p id="participantsModalText">Кто есть в этом разговоре.</p>
         <div id="participantsList" class="participants-list"></div>
+      </section>
+    </div>
+
+    <div id="mediaViewerModal" class="media-viewer" hidden>
+      <section class="media-viewer-card">
+        <button id="closeMediaViewerBtn" class="modal-close" type="button" aria-label="Закрыть">×</button>
+        <h3 id="mediaViewerTitle">Трансляция</h3>
+        <p id="mediaViewerText">Камера или демонстрация экрана</p>
+        <div id="mediaViewerBody" class="media-viewer-body"></div>
       </section>
     </div>
 
