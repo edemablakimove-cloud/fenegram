@@ -49,20 +49,20 @@
         </div>
 
         <nav class="sidebar-nav" aria-label="Навигация">
-          <button id="channelTabBtn" class="nav-button active">Главный канал</button>
-          <button id="directTabBtn" class="nav-button">Личные сообщения</button>
-          <button id="systemTabBtn" class="nav-button">Система</button>
-          <button id="settingsTabBtn" class="nav-button">Настройки</button>
+          <button id="channelTabBtn" class="nav-button active" data-mobile-label="Канал">Главный канал</button>
+          <button id="directTabBtn" class="nav-button" data-mobile-label="Чаты">Личные сообщения</button>
+          <button id="systemTabBtn" class="nav-button" data-mobile-label="Логи">Система</button>
+          <button id="settingsTabBtn" class="nav-button" data-mobile-label="Профиль">Настройки</button>
         </nav>
 
         <section class="panel voice-panel">
           <div class="section-title">Голос</div>
           <button id="voiceBtn" class="primary">Войти в голос</button>
           <div class="voice-actions">
-            <button id="muteBtn" disabled>Выключить микрофон</button>
-            <button id="deafenBtn" disabled>Выключить звук и микрофон</button>
-            <button id="cameraBtn" disabled>Включить камеру</button>
-            <button id="screenShareBtn" disabled>Показать экран</button>
+            <button id="muteBtn" data-mobile-label="Мик" disabled>Выключить микрофон</button>
+            <button id="deafenBtn" data-mobile-label="Звук" disabled>Выключить звук и микрофон</button>
+            <button id="cameraBtn" data-mobile-label="Камера" disabled>Включить камеру</button>
+            <button id="screenShareBtn" data-mobile-label="Экран" disabled>Показать экран</button>
           </div>
           <p id="voiceStatus" class="device-test-status">Не в голосовом канале</p>
         </section>
@@ -111,9 +111,9 @@
                 <button id="directModeBtn" class="active" type="button">Личные сообщения</button>
                 <button id="groupModeBtn" type="button">Группы</button>
               </div>
-              <button id="participantsBtn" type="button" disabled>Участники</button>
-              <button id="mobileBackChatsBtn" class="mobile-back-chats" type="button">К списку</button>
-              <button id="blockDirectBtn" type="button" disabled>Заблокировать</button>
+              <button id="participantsBtn" type="button" data-mobile-label="Люди" disabled>Участники</button>
+              <button id="mobileBackChatsBtn" class="mobile-back-chats" type="button" data-mobile-label="Назад">К списку</button>
+              <button id="blockDirectBtn" type="button" data-mobile-label="Блок" disabled>Заблокировать</button>
             </div>
           </header>
           <section class="direct-layout">

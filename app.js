@@ -47,6 +47,7 @@ const state = {
   currentProfile: null,
   directProfiles: new Map(),
   directMessagesStore: [],
+  directRefreshTimer: null,
   selectedDirectUserId: null,
   selectedConversationType: null,
   blockedUsers: new Set(),
@@ -797,6 +798,28 @@ async function loadStoredDirectMessages() {
   await loadDirectProfilesFromMessages();
 }
 
+async function refreshDirectInbox() {
+  if (!state.authClient || !state.currentProfile) return;
+  const selectedBefore = state.selectedDirectUserId;
+  await loadStoredDirectMessages();
+  renderDirectChatList();
+  if (selectedBefore && state.selectedDirectUserId === selectedBefore) renderDirectChat();
+  updateConversationLayoutState();
+}
+
+function startDirectRefresh() {
+  stopDirectRefresh();
+  state.directRefreshTimer = window.setInterval(() => {
+    refreshDirectInbox().catch(() => {});
+  }, 8000);
+}
+
+function stopDirectRefresh() {
+  if (!state.directRefreshTimer) return;
+  window.clearInterval(state.directRefreshTimer);
+  state.directRefreshTimer = null;
+}
+
 async function loadDirectProfilesFromMessages() {
   const myId = state.currentProfile?.id;
   const ids = new Set();
@@ -828,7 +851,9 @@ function subscribeDirectMessages() {
     .channel(`direct-${myId}`)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: `sender_id=eq.${myId}` }, handleRealtimeDirectMessage)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: `recipient_id=eq.${myId}` }, handleRealtimeDirectMessage)
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "direct_messages" }, handleRealtimeDirectDelete)
     .subscribe();
+  startDirectRefresh();
 }
 
 function cleanupDirectSubscription() {
@@ -836,6 +861,7 @@ function cleanupDirectSubscription() {
     state.authClient.removeChannel(state.directChannel).catch(() => {});
   }
   state.directChannel = null;
+  stopDirectRefresh();
 }
 
 function subscribeGroupMessages() {
@@ -863,6 +889,16 @@ async function handleRealtimeDirectMessage(payload) {
   await loadProfilesByIds([otherId]);
   renderDirectChatList();
   if (state.selectedDirectUserId === otherId) renderDirectChat();
+}
+
+function handleRealtimeDirectDelete(payload) {
+  const messageId = payload.old?.id;
+  if (!messageId) return;
+  const before = state.directMessagesStore.length;
+  state.directMessagesStore = state.directMessagesStore.filter((item) => item.id !== messageId);
+  if (state.directMessagesStore.length === before) return;
+  renderDirectChatList();
+  renderDirectChat();
 }
 
 async function handleRealtimeGroupMessage(payload) {
@@ -1683,9 +1719,28 @@ function renderDirectChat() {
   const messages = state.directMessagesStore.filter((message) => otherDirectUserId(message) === profile.id);
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
-    addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile, own);
+    addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile, own, own ? {
+      label: "Удалить",
+      onClick: () => deleteOwnDirectMessage(message.id),
+    } : null);
   }
   el.directMessages.scrollTop = el.directMessages.scrollHeight;
+}
+
+async function deleteOwnDirectMessage(messageId) {
+  if (!messageId || !state.authClient || !state.currentProfile) return;
+  const { error } = await state.authClient
+    .from("direct_messages")
+    .delete()
+    .eq("id", messageId)
+    .eq("sender_id", state.currentProfile.id);
+  if (error) {
+    addSystem(`Не удалось удалить личное сообщение: ${error.message}`);
+    return;
+  }
+  state.directMessagesStore = state.directMessagesStore.filter((message) => message.id !== messageId);
+  renderDirectChatList();
+  renderDirectChat();
 }
 
 function renderSelectedGroupChat() {
@@ -2661,7 +2716,7 @@ function addSystem(text) {
   addMessage("Система", text, true, el.systemMessages);
 }
 
-function addMessage(author, text, system = false, container = el.messages, profile = null, own = false) {
+function addMessage(author, text, system = false, container = el.messages, profile = null, own = false, action = null) {
   const item = document.createElement("div");
   item.className = `message${system ? " system" : ""}${own ? " own" : ""}`;
   if (profile) {
@@ -2672,14 +2727,33 @@ function addMessage(author, text, system = false, container = el.messages, profi
     authorEl.className = "author";
     authorEl.textContent = author;
     header.appendChild(authorEl);
+    if (action) header.appendChild(createMessageAction(action));
     const textEl = document.createElement("div");
     textEl.textContent = text;
     item.append(header, textEl);
   } else {
-    item.innerHTML = `<div class="author">${escapeHtml(author)}</div><div>${escapeHtml(text)}</div>`;
+    const header = document.createElement("div");
+    header.className = "message-header";
+    const authorEl = document.createElement("div");
+    authorEl.className = "author";
+    authorEl.textContent = author;
+    header.appendChild(authorEl);
+    if (action) header.appendChild(createMessageAction(action));
+    const textEl = document.createElement("div");
+    textEl.textContent = text;
+    item.append(header, textEl);
   }
   container.appendChild(item);
   container.scrollTop = container.scrollHeight;
+}
+
+function createMessageAction(action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "message-delete";
+  button.textContent = action.label || "Удалить";
+  button.addEventListener("click", action.onClick);
+  return button;
 }
 
 function escapeHtml(value) {

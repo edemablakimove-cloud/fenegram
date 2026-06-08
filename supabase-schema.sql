@@ -93,6 +93,12 @@ with check (
   )
 );
 
+drop policy if exists "users can delete own direct messages" on public.direct_messages;
+create policy "users can delete own direct messages"
+on public.direct_messages for delete
+to authenticated
+using (sender_id = auth.uid());
+
 drop policy if exists "users can read own blocks" on public.blocked_users;
 create policy "users can read own blocks"
 on public.blocked_users for select
@@ -199,6 +205,8 @@ create index if not exists profiles_handle_idx on public.profiles(handle);
 create index if not exists groups_owner_created_idx on public.groups(owner_id, created_at desc);
 create index if not exists group_members_user_idx on public.group_members(user_id);
 create index if not exists group_messages_group_created_idx on public.group_messages(group_id, created_at desc);
+
+alter table public.direct_messages replica identity full;
 
 do $$
 begin

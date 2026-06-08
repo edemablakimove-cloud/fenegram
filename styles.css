@@ -38,6 +38,10 @@ body.locked .app-shell {
   user-select: none;
 }
 
+body.locked .sidebar-nav {
+  display: none;
+}
+
 button,
 input,
 select {
@@ -78,6 +82,7 @@ button:disabled {
 input,
 select {
   width: 100%;
+  min-width: 0;
   min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -96,6 +101,7 @@ label {
   display: grid;
   gap: 6px;
   color: var(--muted);
+  min-width: 0;
 }
 
 .auth-gate {
@@ -344,7 +350,7 @@ h2 {
   align-content: start;
   gap: 14px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel);
   padding: 16px;
 }
@@ -1029,6 +1035,7 @@ button.avatar {
 
   .app-shell {
     min-height: 100svh;
+    padding-bottom: 72px;
   }
 
   .sidebar,
@@ -1040,9 +1047,14 @@ button.avatar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    padding: 10px;
-    gap: 10px;
+    padding: 10px 10px 8px;
+    gap: 8px;
     border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    z-index: 18;
+    background: rgba(30, 33, 41, 0.96);
+    backdrop-filter: blur(12px);
   }
 
   .brand {
@@ -1050,22 +1062,92 @@ button.avatar {
   }
 
   .sidebar-nav {
-    grid-column: 1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 25;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    background: rgba(21, 24, 31, 0.96);
+    padding: 6px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(14px);
+  }
+
+  .nav-button {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 3px;
+    min-height: 52px;
+    padding: 6px 4px;
+    text-align: center;
+    font-size: 0;
+    line-height: 1.1;
+  }
+
+  .nav-button::before {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+
+  .nav-button::after {
+    content: attr(data-mobile-label);
+    color: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.1;
   }
 
   .voice-panel {
     grid-column: 1;
     margin-top: 0;
+    gap: 8px;
+    padding: 10px;
   }
 
   .voice-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .voice-actions button {
+    min-height: 36px;
+    padding: 0 6px;
+    font-size: 0;
+  }
+
+  .voice-actions button::after {
+    content: attr(data-mobile-label);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  #voiceBtn {
+    min-height: 40px;
   }
 
   .settings-content {
     grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .settings-section {
+    gap: 10px;
+    border-radius: 10px;
     padding: 12px;
+  }
+
+  .settings-section .section-title {
+    font-size: 12px;
+  }
+
+  .account-actions {
+    gap: 6px;
   }
 
   .main {
@@ -1077,6 +1159,9 @@ button.avatar {
     padding: 12px 14px;
     align-items: stretch;
     gap: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 12;
   }
 
   .conversation-topbar,
@@ -1085,12 +1170,27 @@ button.avatar {
     flex-direction: column;
   }
 
+  .conversation-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .conversation-tabs {
+    grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .conversation-actions > button {
-    width: 100%;
+    width: auto;
+    min-width: 0;
+    padding-inline: 8px;
+    font-size: 0;
+  }
+
+  .conversation-actions > button::after {
+    content: attr(data-mobile-label);
+    font-size: 12px;
+    font-weight: 700;
   }
 
   .mobile-back-chats:not([hidden]) {
@@ -1138,7 +1238,22 @@ button.avatar {
 
   #directView.conversation-open .direct-chat {
     display: grid;
-    min-height: calc(100svh - 210px);
+    min-height: calc(100svh - 235px);
+  }
+
+  #directView.conversation-open .conversation-topbar {
+    min-height: 96px;
+  }
+
+  #directView.conversation-open .conversation-topbar h2 {
+    font-size: 17px;
+  }
+
+  #directView.conversation-open .conversation-topbar p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
   .direct-user-button {
@@ -1146,12 +1261,21 @@ button.avatar {
   }
 
   .composer {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 48px;
     padding: 10px;
   }
 
   .composer button {
-    width: 100%;
+    width: 48px;
+    min-width: 48px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .composer button::after {
+    content: ">";
+    font-size: 18px;
+    font-weight: 800;
   }
 
   .messages {
@@ -1171,6 +1295,10 @@ button.avatar {
   select {
     min-height: 44px;
   }
+
+  label {
+    gap: 5px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1178,25 +1306,74 @@ button.avatar {
     font-size: 13px;
   }
 
+  .app-shell {
+    padding-bottom: 78px;
+  }
+
   .brand-mark {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .brand {
+    gap: 9px;
+  }
+
+  .brand h1 {
+    font-size: 17px;
+  }
+
+  .brand p {
+    font-size: 12px;
   }
 
   .sidebar-nav {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .voice-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .voice-panel .section-title,
+  .device-test-status {
+    font-size: 11px;
   }
 
   .topbar h2 {
     font-size: 18px;
   }
 
+  .conversation-topbar {
+    min-height: 116px;
+  }
+
+  .conversation-tabs {
+    gap: 4px;
+  }
+
+  .conversation-tabs button,
+  .conversation-actions > button {
+    min-height: 38px;
+    font-size: 12px;
+  }
+
   .direct-sidebar {
     padding: 12px;
+  }
+
+  .settings-content {
+    padding: 8px;
+  }
+
+  .settings-section {
+    padding: 10px;
+  }
+
+  .settings-section label,
+  .check-label {
+    font-size: 12px;
   }
 
   .conversation-empty {
@@ -1210,5 +1387,24 @@ button.avatar {
 
   .modal-card {
     padding: 18px;
+  }
+
+  .message {
+    max-width: 94%;
+    padding: 7px 10px;
+  }
+
+  .message:not(.system)::before {
+    display: none;
+  }
+
+  .composer {
+    gap: 8px;
+  }
+
+  .composer input,
+  .composer button {
+    min-height: 42px;
+    height: 42px;
   }
 }
