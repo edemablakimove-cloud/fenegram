@@ -134,14 +134,7 @@ drop policy if exists "users can read own memberships" on public.group_members;
 create policy "users can read own memberships"
 on public.group_members for select
 to authenticated
-using (
-  user_id = auth.uid()
-  or exists (
-    select 1 from public.group_members own_membership
-    where own_membership.group_id = group_members.group_id
-      and own_membership.user_id = auth.uid()
-  )
-);
+using (true);
 
 drop policy if exists "users can add group members" on public.group_members;
 create policy "users can add group members"

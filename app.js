@@ -1683,7 +1683,7 @@ function renderDirectChat() {
   const messages = state.directMessagesStore.filter((message) => otherDirectUserId(message) === profile.id);
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
-    addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile);
+    addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile, own);
   }
   el.directMessages.scrollTop = el.directMessages.scrollHeight;
 }
@@ -1707,7 +1707,7 @@ function renderSelectedGroupChat() {
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
     const profile = own ? state.currentProfile : state.directProfiles.get(message.sender_id);
-    addMessage(own ? fenegramDisplayName() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile);
+    addMessage(own ? fenegramDisplayName() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile, own);
   }
   el.directMessages.scrollTop = el.directMessages.scrollHeight;
 }
@@ -2623,7 +2623,7 @@ function removeChatMessage(messageId) {
 
 function addChatMessage(message) {
   const item = document.createElement("div");
-  item.className = "message";
+  item.className = `message${message.own || message.senderId === state.clientId ? " own" : ""}`;
   item.dataset.messageId = message.id || "";
   const header = document.createElement("div");
   header.className = "message-header";
@@ -2661,9 +2661,9 @@ function addSystem(text) {
   addMessage("Система", text, true, el.systemMessages);
 }
 
-function addMessage(author, text, system = false, container = el.messages, profile = null) {
+function addMessage(author, text, system = false, container = el.messages, profile = null, own = false) {
   const item = document.createElement("div");
-  item.className = `message${system ? " system" : ""}`;
+  item.className = `message${system ? " system" : ""}${own ? " own" : ""}`;
   if (profile) {
     const header = document.createElement("div");
     header.className = "message-header";
