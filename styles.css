@@ -722,15 +722,18 @@ h2 {
 
 .message-delete {
   min-height: 24px;
-  border: 0;
-  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
   color: var(--muted);
-  padding: 0 4px;
+  padding: 0 8px;
   font-size: 12px;
-  opacity: 0.72;
+  opacity: 0.9;
 }
 
 .message-delete:hover {
+  border-color: rgba(255, 91, 91, 0.35);
+  background: rgba(255, 91, 91, 0.08);
   color: var(--danger);
 }
 
@@ -1067,7 +1070,7 @@ button.avatar {
     right: 10px;
     bottom: calc(10px + env(safe-area-inset-bottom));
     z-index: 25;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 14px;
@@ -1075,6 +1078,10 @@ button.avatar {
     padding: 6px;
     box-shadow: var(--shadow);
     backdrop-filter: blur(14px);
+  }
+
+  body.main-channel-available .sidebar-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .nav-button {
@@ -1263,6 +1270,9 @@ button.avatar {
   .composer {
     grid-template-columns: minmax(0, 1fr) 48px;
     padding: 10px;
+    position: sticky;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    z-index: 10;
   }
 
   .composer button {
@@ -1329,6 +1339,10 @@ button.avatar {
   }
 
   .sidebar-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  body.main-channel-available .sidebar-nav {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 

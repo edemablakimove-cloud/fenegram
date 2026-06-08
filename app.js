@@ -502,6 +502,7 @@ function refreshAppAccess() {
   const allowed = canUseApp();
   const mainAllowed = canUseMainChannel();
   document.body.classList.toggle("locked", !allowed);
+  document.body.classList.toggle("main-channel-available", mainAllowed);
   el.authGate.hidden = allowed;
   el.channelTab.hidden = !mainAllowed;
   el.channelTab.disabled = !mainAllowed;
@@ -788,13 +789,13 @@ async function loadStoredDirectMessages() {
     .from("direct_messages")
     .select("id, sender_id, recipient_id, content, created_at")
     .or(`sender_id.eq.${myId},recipient_id.eq.${myId}`)
-    .order("created_at", { ascending: true })
-    .limit(300);
+    .order("created_at", { ascending: false })
+    .limit(500);
   if (error) {
     addSystem(`Не удалось загрузить личные сообщения: ${error.message}`);
     return;
   }
-  state.directMessagesStore = data || [];
+  state.directMessagesStore = dedupeDirectMessages([...(data || [])].reverse());
   await loadDirectProfilesFromMessages();
 }
 
@@ -811,7 +812,7 @@ function startDirectRefresh() {
   stopDirectRefresh();
   state.directRefreshTimer = window.setInterval(() => {
     refreshDirectInbox().catch(() => {});
-  }, 8000);
+  }, 3000);
 }
 
 function stopDirectRefresh() {
@@ -852,7 +853,9 @@ function subscribeDirectMessages() {
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: `sender_id=eq.${myId}` }, handleRealtimeDirectMessage)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: `recipient_id=eq.${myId}` }, handleRealtimeDirectMessage)
     .on("postgres_changes", { event: "DELETE", schema: "public", table: "direct_messages" }, handleRealtimeDirectDelete)
-    .subscribe();
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") refreshDirectInbox().catch(() => {});
+    });
   startDirectRefresh();
 }
 
@@ -883,12 +886,17 @@ function cleanupGroupSubscription() {
 
 async function handleRealtimeDirectMessage(payload) {
   const message = payload.new;
-  if (!message || state.directMessagesStore.some((item) => item.id === message.id)) return;
-  state.directMessagesStore.push(message);
+  if (!message) return;
+  const alreadyStored = state.directMessagesStore.some((item) => item.id === message.id);
+  if (!alreadyStored) {
+    state.directMessagesStore.push(message);
+    state.directMessagesStore = dedupeDirectMessages(state.directMessagesStore);
+  }
   const otherId = otherDirectUserId(message);
   await loadProfilesByIds([otherId]);
   renderDirectChatList();
   if (state.selectedDirectUserId === otherId) renderDirectChat();
+  updateConversationLayoutState();
 }
 
 function handleRealtimeDirectDelete(payload) {
@@ -917,6 +925,15 @@ async function handleRealtimeGroupMember() {
 
 function otherDirectUserId(message) {
   return message.sender_id === state.currentProfile?.id ? message.recipient_id : message.sender_id;
+}
+
+function dedupeDirectMessages(messages) {
+  const byId = new Map();
+  for (const message of messages) {
+    if (!message?.id) continue;
+    byId.set(message.id, message);
+  }
+  return [...byId.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 }
 
 async function refreshDevices() {
@@ -954,6 +971,7 @@ function showView(view) {
   el.directTab.classList.toggle("active", direct);
   el.systemTab.classList.toggle("active", system);
   el.settingsTab.classList.toggle("active", settings);
+  if (direct) refreshDirectInbox().catch(() => {});
 }
 
 async function saveUserSettings() {
@@ -1228,10 +1246,13 @@ async function sendDirectMessage(event) {
   }
   if (data && !state.directMessagesStore.some((item) => item.id === data.id)) {
     state.directMessagesStore.push(data);
+    state.directMessagesStore = dedupeDirectMessages(state.directMessagesStore);
   }
   el.directMessage.value = "";
+  await loadProfilesByIds([recipientId]);
   renderDirectChatList();
   renderDirectChat();
+  refreshDirectInbox().catch(() => {});
 }
 
 async function sendGroupMessage(text) {
@@ -2752,6 +2773,8 @@ function createMessageAction(action) {
   button.type = "button";
   button.className = "message-delete";
   button.textContent = action.label || "Удалить";
+  button.title = action.title || button.textContent;
+  button.setAttribute("aria-label", button.title);
   button.addEventListener("click", action.onClick);
   return button;
 }
