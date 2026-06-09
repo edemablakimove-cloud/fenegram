@@ -4,7 +4,7 @@ const EVENT_DELETE_MESSAGE = 2;
 const EVENT_DIRECT_MESSAGE = 3;
 const EVENT_PROFILE = 4;
 const EVENT_VOICE_SIGNAL = 5;
-const APP_VERSION = "0.2.1";
+const APP_VERSION = "0.2.6";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
@@ -77,6 +77,8 @@ const state = {
   voiceRoomName: ROOM_NAME,
   voiceRoomLabel: "Звонок",
   conversationPanel: "direct",
+  replyTarget: null,
+  toastTimer: null,
 };
 
 const el = {
@@ -111,6 +113,9 @@ const el = {
   directUsers: document.querySelector("#directUsersList"),
   directForm: document.querySelector("#directMessageForm"),
   directMessage: document.querySelector("#directMessageInput"),
+  replyPreview: document.querySelector("#replyPreview"),
+  replyPreviewText: document.querySelector("#replyPreviewText"),
+  cancelReply: document.querySelector("#cancelReplyBtn"),
   videoStage: document.querySelector("#videoStage"),
   videoGrid: document.querySelector("#videoGrid"),
   systemMessages: document.querySelector("#systemMessages"),
@@ -181,12 +186,14 @@ const el = {
   openGroupJoin: document.querySelector("#openGroupJoinBtn"),
   conversationEmpty: document.querySelector("#conversationEmpty"),
   conversationPrimaryAction: document.querySelector("#conversationPrimaryAction"),
+  conversationSecondaryAction: document.querySelector("#conversationSecondaryAction"),
   conversationModal: document.querySelector("#conversationModal"),
   closeConversationModal: document.querySelector("#closeConversationModalBtn"),
   conversationModalTitle: document.querySelector("#conversationModalTitle"),
   conversationModalText: document.querySelector("#conversationModalText"),
   mobileBackChats: document.querySelector("#mobileBackChatsBtn"),
   callToggle: document.querySelector("#callToggleBtn"),
+  copyGroupId: document.querySelector("#copyGroupIdBtn"),
   callPanel: document.querySelector("#callPanel"),
   participants: document.querySelector("#participantsBtn"),
   participantsModal: document.querySelector("#participantsModal"),
@@ -206,6 +213,7 @@ const el = {
   userMenuHandle: document.querySelector("#userMenuHandle"),
   userMenuMessage: document.querySelector("#userMenuMessageBtn"),
   userMenuBlock: document.querySelector("#userMenuBlockBtn"),
+  toast: document.querySelector("#toast"),
 };
 
 loadSettings();
@@ -233,6 +241,7 @@ el.camera.addEventListener("click", toggleCamera);
 el.screenShare.addEventListener("click", toggleScreenShare);
 el.form.addEventListener("submit", sendMessage);
 el.directForm.addEventListener("submit", sendDirectMessage);
+el.cancelReply.addEventListener("click", clearReplyTarget);
 el.connectionCheck.addEventListener("click", runConnectionCheck);
 el.mic.addEventListener("change", () => {
   localStorage.setItem("pm.micDevice", el.mic.value);
@@ -274,9 +283,11 @@ el.openGroupJoin.addEventListener("click", () => openConversationModal("group-jo
 el.conversationPrimaryAction.addEventListener("click", () => {
   openConversationModal(state.conversationPanel === "group" ? "group-create" : "direct-search");
 });
+el.conversationSecondaryAction.addEventListener("click", () => openConversationModal("group-join"));
 el.closeConversationModal.addEventListener("click", closeConversationModal);
 el.mobileBackChats.addEventListener("click", backToConversationList);
 el.callToggle.addEventListener("click", toggleCallPanel);
+el.copyGroupId.addEventListener("click", copySelectedGroupId);
 el.participants.addEventListener("click", openParticipantsModal);
 el.closeParticipantsModal.addEventListener("click", closeParticipantsModal);
 el.closeMediaViewer.addEventListener("click", closeMediaViewer);
@@ -735,6 +746,7 @@ async function saveHandle(event) {
   syncVoiceParticipants();
   renderMembers();
   refreshAppAccess();
+  showToast(`@${data.handle} сохранен`);
   await loadDirectData();
   await loadGroupData();
   subscribeDirectMessages();
@@ -802,6 +814,7 @@ function hideUserMenu() {
 
 function openDirectChat(profile) {
   if (!profile) return;
+  clearReplyTarget();
   state.conversationPanel = "direct";
   state.selectedDirectUserId = profile.id;
   state.selectedGroupId = null;
@@ -1154,6 +1167,7 @@ async function saveUserSettings() {
   syncVoiceParticipants();
   renderMembers();
   setDeviceTestStatus("Настройки сохранены.");
+  showToast("Настройки сохранены");
 
   if (nickname !== oldName || appId !== oldAppId || el.region.value !== oldRegion) {
     reconnectTextChat();
@@ -1383,7 +1397,8 @@ async function sendDirectMessage(event) {
     addSystem("Пользователь заблокирован. Разблокируй его, чтобы написать.");
     return;
   }
-  const { data, error } = await awaitInsertDirectMessage(recipientId, text);
+  const outgoingText = withReplyQuote(text);
+  const { data, error } = await awaitInsertDirectMessage(recipientId, outgoingText);
   if (error) {
     addSystem(`Не удалось отправить личное сообщение: ${error.message}`);
     return;
@@ -1393,6 +1408,7 @@ async function sendDirectMessage(event) {
     state.directMessagesStore = dedupeDirectMessages(state.directMessagesStore);
   }
   el.directMessage.value = "";
+  clearReplyTarget();
   await loadProfilesByIds([recipientId]);
   renderDirectChatList();
   renderDirectChat();
@@ -1402,12 +1418,13 @@ async function sendDirectMessage(event) {
 async function sendGroupMessage(text) {
   const groupId = state.selectedGroupId;
   if (!text || !groupId || !state.authClient || !state.currentProfile) return;
+  const outgoingText = withReplyQuote(text);
   const { data, error } = await state.authClient
     .from("group_messages")
     .insert({
       group_id: groupId,
       sender_id: state.currentProfile.id,
-      content: text.slice(0, 4000),
+      content: outgoingText.slice(0, 4000),
     })
     .select("id, group_id, sender_id, content, created_at")
     .single();
@@ -1419,6 +1436,7 @@ async function sendGroupMessage(text) {
     state.groupMessagesStore.push(data);
   }
   el.directMessage.value = "";
+  clearReplyTarget();
   renderGroupList();
   renderDirectChat();
 }
@@ -1477,9 +1495,11 @@ async function searchDirectUser(event) {
     return;
   }
   state.directProfiles.set(data.id, data);
-  const button = createDirectProfileButton(data, "Начать чат");
-  el.directSearchResults.appendChild(button);
+  el.directSearch.value = "";
+  el.directSearchResults.innerHTML = "";
   closeConversationModal();
+  openDirectChat(data);
+  showToast(`Чат с @${data.handle} открыт`);
 }
 
 function renderDirectChatList() {
@@ -1532,6 +1552,7 @@ function createDirectProfileButton(profile, preview) {
 
 function openGroupChat(group) {
   if (!group) return;
+  clearReplyTarget();
   state.conversationPanel = "group";
   state.selectedGroupId = group.id;
   state.selectedDirectUserId = null;
@@ -1546,6 +1567,7 @@ function openGroupChat(group) {
 }
 
 function showConversationPanel(panel) {
+  if (state.conversationPanel !== panel) clearReplyTarget();
   state.conversationPanel = panel;
   el.conversationTitle.textContent = panel === "group" ? "Группы" : "Личные сообщения";
   el.directPanel.hidden = panel !== "direct";
@@ -1569,6 +1591,7 @@ function showConversationPanel(panel) {
 }
 
 function backToConversationList() {
+  clearReplyTarget();
   state.selectedConversationType = null;
   state.selectedDirectUserId = null;
   state.selectedGroupId = null;
@@ -1581,9 +1604,12 @@ function backToConversationList() {
 
 function updateConversationLayoutState() {
   const open = Boolean(state.selectedConversationType);
+  const groupOpen = state.selectedConversationType === "group" && Boolean(state.selectedGroupId);
   el.directView.classList.toggle("conversation-open", open);
   el.directView.classList.toggle("no-conversation", !open);
   el.mobileBackChats.hidden = !open;
+  el.copyGroupId.hidden = !groupOpen;
+  el.copyGroupId.disabled = !groupOpen;
   el.participants.disabled = !open;
   el.callToggle.disabled = !open;
   if (!open) el.callPanel.hidden = true;
@@ -1601,12 +1627,102 @@ function updateCallButtonLabel() {
   if (state.voiceEnabled) {
     el.callToggle.textContent = "Звонок идет";
     el.callToggle.dataset.mobileLabel = "В эфире";
+    el.callToggle.classList.add("active");
   } else if (!el.callPanel.hidden) {
     el.callToggle.textContent = "Скрыть звонок";
     el.callToggle.dataset.mobileLabel = "Скрыть";
+    el.callToggle.classList.add("active");
   } else {
     el.callToggle.textContent = "Позвонить";
     el.callToggle.dataset.mobileLabel = "Звонок";
+    el.callToggle.classList.remove("active");
+  }
+}
+
+function startReply(author, text) {
+  if (!state.selectedConversationType) return;
+  state.replyTarget = {
+    author: String(author || "Сообщение").slice(0, 80),
+    excerpt: replyExcerpt(text),
+    type: state.selectedConversationType,
+    id: state.selectedConversationType === "group" ? state.selectedGroupId : state.selectedDirectUserId,
+  };
+  updateReplyPreview();
+  el.directMessage.focus();
+}
+
+function clearReplyTarget() {
+  state.replyTarget = null;
+  updateReplyPreview();
+}
+
+function updateReplyPreview() {
+  if (!el.replyPreview || !el.replyPreviewText) return;
+  if (!state.replyTarget || !isReplyTargetCurrent()) {
+    state.replyTarget = null;
+    el.replyPreview.hidden = true;
+    return;
+  }
+  el.replyPreviewText.textContent = `${state.replyTarget.author}: ${state.replyTarget.excerpt}`;
+  el.replyPreview.hidden = false;
+}
+
+function isReplyTargetCurrent() {
+  if (!state.replyTarget) return false;
+  const currentId = state.selectedConversationType === "group" ? state.selectedGroupId : state.selectedDirectUserId;
+  return state.replyTarget.type === state.selectedConversationType && state.replyTarget.id === currentId;
+}
+
+function withReplyQuote(text) {
+  if (!state.replyTarget || !isReplyTargetCurrent()) return text;
+  return `↩ ${state.replyTarget.author}: ${state.replyTarget.excerpt}\n${text}`;
+}
+
+function replyExcerpt(text) {
+  const parsed = parseReplyText(text);
+  return String(parsed.body || text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120) || "сообщение";
+}
+
+function parseReplyText(text) {
+  const value = String(text || "");
+  if (!value.startsWith("↩ ")) return { body: value };
+  const lineEnd = value.indexOf("\n");
+  if (lineEnd < 0) return { body: value };
+  const firstLine = value.slice(2, lineEnd);
+  const separator = firstLine.indexOf(": ");
+  if (separator < 1) return { body: value };
+  return {
+    replyAuthor: firstLine.slice(0, separator),
+    replyExcerpt: firstLine.slice(separator + 2),
+    body: value.slice(lineEnd + 1),
+  };
+}
+
+async function copySelectedGroupId() {
+  const group = state.groups.get(state.selectedGroupId);
+  if (!group?.id) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(group.id);
+    } else {
+      const input = document.createElement("textarea");
+      input.value = group.id;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    addSystem(`ID группы ${group.name} скопирован.`);
+    showToast("ID группы скопирован");
+  } catch (error) {
+    addSystem(`Не удалось скопировать ID: ${error.message}`);
+    showToast("Не удалось скопировать ID");
   }
 }
 
@@ -1941,7 +2057,7 @@ function renderDirectChat() {
   if (!state.selectedConversationType && state.conversationPanel === "group") {
     el.blockDirect.hidden = true;
     el.directStatus.textContent = "Выбери группу справа или создай новую";
-    setConversationEmpty(true, "Выбери группу", "Создай новую группу или присоединись по ID.", "Создать группу");
+    setConversationEmpty(true, "Выбери группу", "Создай новую группу или присоединись по ID.", "Создать группу", "Присоединиться");
     return;
   }
   const profile = state.directProfiles.get(state.selectedDirectUserId);
@@ -1961,12 +2077,24 @@ function renderDirectChat() {
   const messages = state.directMessagesStore.filter((message) => otherDirectUserId(message) === profile.id);
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
-    addMessage(own ? el.name.value.trim() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile, own, own ? {
-      label: "Удалить",
-      onClick: () => deleteOwnDirectMessage(message.id),
-    } : null);
+    const author = own ? el.name.value.trim() : displayProfile(profile);
+    const actions = [{
+      label: "Ответ",
+      title: "Ответить на сообщение",
+      kind: "reply",
+      onClick: () => startReply(author, message.content),
+    }];
+    if (own) {
+      actions.push({
+        label: "Удалить",
+        title: "Удалить сообщение",
+        kind: "danger",
+        onClick: () => deleteOwnDirectMessage(message.id),
+      });
+    }
+    addMessage(author, message.content, false, el.directMessages, own ? null : profile, own, actions);
   }
-  el.directMessages.scrollTop = el.directMessages.scrollHeight;
+  scrollCurrentChatToBottom();
 }
 
 async function deleteOwnDirectMessage(messageId) {
@@ -1983,6 +2111,7 @@ async function deleteOwnDirectMessage(messageId) {
   state.directMessagesStore = state.directMessagesStore.filter((message) => message.id !== messageId);
   renderDirectChatList();
   renderDirectChat();
+  showToast("Сообщение удалено");
 }
 
 function renderSelectedGroupChat() {
@@ -1994,7 +2123,7 @@ function renderSelectedGroupChat() {
   el.blockDirect.hidden = true;
   if (!group) {
     el.directStatus.textContent = "Выбери группу справа или создай новую";
-    setConversationEmpty(true, "Выбери группу", "Создай новую группу или присоединись по ID.", "Создать группу");
+    setConversationEmpty(true, "Выбери группу", "Создай новую группу или присоединись по ID.", "Создать группу", "Присоединиться");
     return;
   }
   const role = state.groupMemberships.get(group.id) || "member";
@@ -2004,19 +2133,36 @@ function renderSelectedGroupChat() {
   for (const message of messages) {
     const own = message.sender_id === state.currentProfile.id;
     const profile = own ? state.currentProfile : state.directProfiles.get(message.sender_id);
-    addMessage(own ? fenegramDisplayName() : displayProfile(profile), message.content, false, el.directMessages, own ? null : profile, own);
+    const author = own ? fenegramDisplayName() : displayProfile(profile);
+    addMessage(author, message.content, false, el.directMessages, own ? null : profile, own, [{
+      label: "Ответ",
+      title: "Ответить на сообщение",
+      kind: "reply",
+      onClick: () => startReply(author, message.content),
+    }]);
   }
-  el.directMessages.scrollTop = el.directMessages.scrollHeight;
+  scrollCurrentChatToBottom();
 }
 
-function setConversationEmpty(visible, title = "", text = "", button = "") {
+function setConversationEmpty(visible, title = "", text = "", button = "", secondaryButton = "") {
   el.conversationEmpty.hidden = !visible;
   el.directMessages.hidden = visible;
   el.directForm.hidden = visible;
+  if (visible && state.replyTarget) clearReplyTarget();
   if (!visible) return;
   el.conversationEmpty.querySelector("h3").textContent = title;
   el.conversationEmpty.querySelector("p").textContent = text;
   el.conversationPrimaryAction.textContent = button;
+  el.conversationEmpty.classList.toggle("has-secondary", Boolean(secondaryButton));
+  el.conversationSecondaryAction.hidden = !secondaryButton;
+  el.conversationSecondaryAction.textContent = secondaryButton;
+}
+
+function scrollCurrentChatToBottom() {
+  el.directMessages.scrollTop = el.directMessages.scrollHeight;
+  window.requestAnimationFrame(() => {
+    el.directForm?.scrollIntoView({ block: "end" });
+  });
 }
 
 async function toggleDirectBlock() {
@@ -3606,9 +3752,21 @@ function addSystem(text) {
   addMessage("Система", text, true, el.systemMessages);
 }
 
+function showToast(text, timeout = 2600) {
+  if (!el.toast) return;
+  window.clearTimeout(state.toastTimer);
+  el.toast.textContent = text;
+  el.toast.hidden = false;
+  state.toastTimer = window.setTimeout(() => {
+    el.toast.hidden = true;
+  }, timeout);
+}
+
 function addMessage(author, text, system = false, container = el.messages, profile = null, own = false, action = null) {
   const item = document.createElement("div");
   item.className = `message${system ? " system" : ""}${own ? " own" : ""}`;
+  const actions = Array.isArray(action) ? action : action ? [action] : [];
+  const parsed = parseReplyText(text);
   if (profile) {
     const header = document.createElement("div");
     header.className = "message-header";
@@ -3617,9 +3775,10 @@ function addMessage(author, text, system = false, container = el.messages, profi
     authorEl.className = "author";
     authorEl.textContent = author;
     header.appendChild(authorEl);
-    if (action) header.appendChild(createMessageAction(action));
+    for (const itemAction of actions) header.appendChild(createMessageAction(itemAction));
     const textEl = document.createElement("div");
-    textEl.textContent = text;
+    textEl.className = "message-body";
+    appendParsedMessageText(textEl, parsed);
     item.append(header, textEl);
   } else {
     const header = document.createElement("div");
@@ -3628,23 +3787,39 @@ function addMessage(author, text, system = false, container = el.messages, profi
     authorEl.className = "author";
     authorEl.textContent = author;
     header.appendChild(authorEl);
-    if (action) header.appendChild(createMessageAction(action));
+    for (const itemAction of actions) header.appendChild(createMessageAction(itemAction));
     const textEl = document.createElement("div");
-    textEl.textContent = text;
+    textEl.className = "message-body";
+    appendParsedMessageText(textEl, parsed);
     item.append(header, textEl);
   }
   container.appendChild(item);
   container.scrollTop = container.scrollHeight;
 }
 
+function appendParsedMessageText(container, parsed) {
+  if (parsed.replyAuthor) {
+    const quote = document.createElement("div");
+    quote.className = "message-reply-quote";
+    quote.textContent = `${parsed.replyAuthor}: ${parsed.replyExcerpt}`;
+    container.appendChild(quote);
+  }
+  const body = document.createElement("div");
+  body.textContent = parsed.body;
+  container.appendChild(body);
+}
+
 function createMessageAction(action) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "message-delete";
+  button.className = `message-action${action.kind === "danger" ? " message-delete" : ""}`;
   button.textContent = action.label || "Удалить";
   button.title = action.title || button.textContent;
   button.setAttribute("aria-label", button.title);
-  button.addEventListener("click", action.onClick);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    action.onClick?.(event);
+  });
   return button;
 }
 

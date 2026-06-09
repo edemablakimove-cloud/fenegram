@@ -115,6 +115,7 @@
                 <button id="groupModeBtn" type="button">Группы</button>
               </div>
               <button id="participantsBtn" type="button" data-mobile-label="Люди" disabled>Участники</button>
+              <button id="copyGroupIdBtn" type="button" data-mobile-label="ID" hidden>Скопировать ID</button>
               <button id="mobileBackChatsBtn" class="mobile-back-chats" type="button" data-mobile-label="Назад">К списку</button>
               <button id="blockDirectBtn" type="button" data-mobile-label="Блок" disabled>Заблокировать</button>
             </div>
@@ -137,10 +138,20 @@
               <div id="conversationEmpty" class="conversation-empty">
                 <h3>Выбери разговор</h3>
                 <p>Можно найти пользователя по @нику или создать группу.</p>
-                <button id="conversationPrimaryAction" class="primary" type="button">Найти пользователя</button>
+                <div class="empty-actions">
+                  <button id="conversationPrimaryAction" class="primary" type="button">Найти пользователя</button>
+                  <button id="conversationSecondaryAction" type="button" hidden>Присоединиться</button>
+                </div>
               </div>
               <div id="directMessages" class="messages"></div>
               <form id="directMessageForm" class="composer">
+                <div id="replyPreview" class="reply-preview" hidden>
+                  <div>
+                    <strong>Ответ</strong>
+                    <span id="replyPreviewText"></span>
+                  </div>
+                  <button id="cancelReplyBtn" type="button" aria-label="Отменить ответ">×</button>
+                </div>
                 <input id="directMessageInput" placeholder="Написать личное сообщение" autocomplete="off" disabled />
                 <button class="primary" type="submit" disabled>Отправить</button>
               </form>
@@ -294,6 +305,8 @@
         </section>
       </section>
     </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <div id="conversationModal" class="modal-backdrop" hidden>
       <section class="modal-card">
