@@ -4,7 +4,7 @@ const EVENT_DELETE_MESSAGE = 2;
 const EVENT_DIRECT_MESSAGE = 3;
 const EVENT_PROFILE = 4;
 const EVENT_VOICE_SIGNAL = 5;
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.2.1";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
@@ -144,6 +144,7 @@ const el = {
   vkProvider: document.querySelector("#vkProviderInput"),
   saveAuthSettings: document.querySelector("#saveAuthSettingsBtn"),
   authSettingsStatus: document.querySelector("#authSettingsStatus"),
+  appVersion: document.querySelector("#appVersion"),
   authGate: document.querySelector("#authGate"),
   authGateStatus: document.querySelector("#authGateStatus"),
   gateGoogleLogin: document.querySelector("#gateGoogleLoginBtn"),
@@ -209,6 +210,7 @@ const el = {
 
 loadSettings();
 loadChatHistory();
+if (el.appVersion) el.appVersion.textContent = `Fenegram ${APP_VERSION}`;
 refreshDevices();
 setConnectedUi(false);
 updateNameChangeUi();
