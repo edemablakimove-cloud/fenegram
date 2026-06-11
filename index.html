@@ -251,6 +251,23 @@
             </section>
 
             <section class="settings-section">
+              <div class="section-title">Диагностика голоса</div>
+              <label>
+                Сервис проверки
+                <select id="voiceDiagnosticService">
+                  <option value="livekit">LiveKit - реальный возврат звука</option>
+                  <option value="photon">Photon - только проверка подключения</option>
+                  <option value="jitsi">Jitsi - недоступно для возврата</option>
+                </select>
+              </label>
+              <div class="device-test-actions">
+                <button id="voiceLoopbackStartBtn" class="primary" type="button">Старт проверки</button>
+                <button id="voiceLoopbackStopBtn" type="button" disabled>Стоп</button>
+              </div>
+              <p id="voiceLoopbackStatus" class="device-test-status">Выбери сервис и нажми старт. Перед тестом убавь громкость, чтобы не поймать эхо.</p>
+            </section>
+
+            <section class="settings-section">
               <div class="section-title">Сервер аккаунтов</div>
               <label>
                 Supabase URL

@@ -4,7 +4,7 @@ const EVENT_DELETE_MESSAGE = 2;
 const EVENT_DIRECT_MESSAGE = 3;
 const EVENT_PROFILE = 4;
 const EVENT_VOICE_SIGNAL = 5;
-const APP_VERSION = "0.2.6";
+const APP_VERSION = "0.2.7";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
@@ -78,6 +78,8 @@ const state = {
   voiceRoomLabel: "Звонок",
   conversationPanel: "direct",
   replyTarget: null,
+  voiceDiagnostic: null,
+  voiceDiagnosticTimer: null,
   toastTimer: null,
 };
 
@@ -136,6 +138,10 @@ const el = {
   videoQualityLabel: document.querySelector("#videoQualityLabel"),
   connectionCheck: document.querySelector("#connectionCheckBtn"),
   connectionCheckStatus: document.querySelector("#connectionCheckStatus"),
+  voiceDiagnosticService: document.querySelector("#voiceDiagnosticService"),
+  voiceLoopbackStart: document.querySelector("#voiceLoopbackStartBtn"),
+  voiceLoopbackStop: document.querySelector("#voiceLoopbackStopBtn"),
+  voiceLoopbackStatus: document.querySelector("#voiceLoopbackStatus"),
   accountStatus: document.querySelector("#accountStatus"),
   emailForm: document.querySelector("#emailAuthForm"),
   emailInput: document.querySelector("#emailInput"),
@@ -243,6 +249,8 @@ el.form.addEventListener("submit", sendMessage);
 el.directForm.addEventListener("submit", sendDirectMessage);
 el.cancelReply.addEventListener("click", clearReplyTarget);
 el.connectionCheck.addEventListener("click", runConnectionCheck);
+el.voiceLoopbackStart.addEventListener("click", startVoiceLoopbackDiagnostic);
+el.voiceLoopbackStop.addEventListener("click", stopVoiceLoopbackDiagnostic);
 el.mic.addEventListener("change", () => {
   localStorage.setItem("pm.micDevice", el.mic.value);
   restartVoiceIfNeeded();
@@ -3396,6 +3404,149 @@ async function runConnectionCheck() {
   } finally {
     el.connectionCheck.disabled = false;
   }
+}
+
+async function startVoiceLoopbackDiagnostic() {
+  if (state.voiceDiagnostic) return;
+  const service = el.voiceDiagnosticService.value;
+  if (service === "photon") {
+    el.voiceLoopbackStatus.textContent = "Photon проверяет текстовый WebSocket и сигналинг, но не является голосовым сервером. Возврат звука через сервер для него невозможен.";
+    showToast("Photon не поддерживает серверный возврат звука");
+    return;
+  }
+  if (service === "jitsi") {
+    el.voiceLoopbackStatus.textContent = "Jitsi в Fenegram работает через iframe и не дает надежно вернуть свой микрофон обратно в уши для диагностики.";
+    showToast("Jitsi loopback недоступен");
+    return;
+  }
+  await startLiveKitLoopbackDiagnostic();
+}
+
+async function startLiveKitLoopbackDiagnostic() {
+  if (!window.LivekitClient?.Room || !window.LivekitClient?.TokenSource) {
+    el.voiceLoopbackStatus.textContent = "Библиотека LiveKit не загрузилась.";
+    return;
+  }
+  if (state.voiceEnabled) {
+    el.voiceLoopbackStatus.textContent = "Сначала выйди из обычного звонка, потом запускай диагностику.";
+    showToast("Выйди из звонка перед тестом");
+    return;
+  }
+  setVoiceLoopbackRunning(true, "LiveKit: создаю тестовую комнату...");
+  const roomName = `diag-${crypto.randomUUID().slice(0, 10)}`;
+  const senderIdentity = `diag-mic-${crypto.randomUUID().slice(0, 8)}`;
+  const receiverIdentity = `diag-ear-${crypto.randomUUID().slice(0, 8)}`;
+  const tokenSource = window.LivekitClient.TokenSource.sandboxTokenServer(LIVEKIT_SANDBOX_ID);
+  let senderRoom;
+  let receiverRoom;
+  try {
+    const [senderCredentials, receiverCredentials] = await Promise.all([
+      tokenSource.fetch({
+        roomName,
+        participantIdentity: senderIdentity,
+        participantName: "Fenegram mic test",
+      }),
+      tokenSource.fetch({
+        roomName,
+        participantIdentity: receiverIdentity,
+        participantName: "Fenegram ear test",
+      }),
+    ]);
+
+    senderRoom = createDiagnosticRoom();
+    receiverRoom = createDiagnosticRoom();
+    state.voiceDiagnostic = { senderRoom, receiverRoom, localTrack: null, audio: null };
+
+    receiverRoom.on(window.LivekitClient.RoomEvent.TrackSubscribed, async (track, publication, participant) => {
+      if (participant.identity !== senderIdentity || track.kind !== window.LivekitClient.Track.Kind.Audio) return;
+      if (!state.voiceDiagnostic) return;
+      window.clearTimeout(state.voiceDiagnosticTimer);
+      const audio = track.attach();
+      audio.autoplay = true;
+      audio.volume = Math.max(0, Math.min(1, Number(el.masterVolume.value) / 100));
+      audio.muted = false;
+      state.voiceDiagnostic.audio = audio;
+      document.body.appendChild(audio);
+      try {
+        await applyAudioOutput(audio);
+      } catch {}
+      audio.play().catch(() => {});
+      el.voiceLoopbackStatus.textContent = "LiveKit: звук вернулся с сервера. Если слышишь себя, этот маршрут работает.";
+      showToast("LiveKit loopback работает");
+    });
+
+    await receiverRoom.connect(receiverCredentials.serverUrl, receiverCredentials.participantToken);
+    el.voiceLoopbackStatus.textContent = "LiveKit: приемник подключен, отправляю микрофон...";
+    await senderRoom.connect(senderCredentials.serverUrl, senderCredentials.participantToken);
+
+    const localTrack = await window.LivekitClient.createLocalAudioTrack({
+      deviceId: el.mic.value || undefined,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    });
+    state.voiceDiagnostic.localTrack = localTrack;
+    await senderRoom.localParticipant.publishTrack(localTrack);
+    el.voiceLoopbackStatus.textContent = "LiveKit: микрофон отправлен на сервер. Говори, сейчас должен появиться возврат в наушниках.";
+    state.voiceDiagnosticTimer = window.setTimeout(() => {
+      if (!state.voiceDiagnostic?.audio) {
+        el.voiceLoopbackStatus.textContent = "LiveKit: микрофон отправлен, но звук не вернулся. Похоже, сеть режет медиа или TURN/SFU не доставил поток.";
+        showToast("Звук не вернулся");
+      }
+    }, 9000);
+  } catch (error) {
+    cleanupVoiceLoopbackDiagnostic();
+    el.voiceLoopbackStatus.textContent = `LiveKit loopback не прошел: ${friendlyLiveKitError(error)}`;
+    showToast("LiveKit loopback не прошел");
+  }
+}
+
+function createDiagnosticRoom() {
+  return new window.LivekitClient.Room({
+    adaptiveStream: false,
+    dynacast: false,
+    audioCaptureDefaults: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  });
+}
+
+function stopVoiceLoopbackDiagnostic() {
+  if (!state.voiceDiagnostic) return;
+  cleanupVoiceLoopbackDiagnostic();
+  setVoiceLoopbackRunning(false, "Проверка остановлена.");
+  showToast("Диагностика остановлена");
+}
+
+function cleanupVoiceLoopbackDiagnostic() {
+  const diagnostic = state.voiceDiagnostic;
+  state.voiceDiagnostic = null;
+  window.clearTimeout(state.voiceDiagnosticTimer);
+  state.voiceDiagnosticTimer = null;
+  try {
+    diagnostic?.localTrack?.stop?.();
+  } catch {}
+  try {
+    diagnostic?.senderRoom?.disconnect?.();
+  } catch {}
+  try {
+    diagnostic?.receiverRoom?.disconnect?.();
+  } catch {}
+  if (diagnostic?.audio) {
+    diagnostic.audio.pause();
+    diagnostic.audio.srcObject = null;
+    diagnostic.audio.remove();
+  }
+  setVoiceLoopbackRunning(false);
+}
+
+function setVoiceLoopbackRunning(running, status = "") {
+  el.voiceLoopbackStart.disabled = running;
+  el.voiceLoopbackStop.disabled = !running;
+  el.voiceDiagnosticService.disabled = running;
+  if (status) el.voiceLoopbackStatus.textContent = status;
 }
 
 function wait(milliseconds) {
