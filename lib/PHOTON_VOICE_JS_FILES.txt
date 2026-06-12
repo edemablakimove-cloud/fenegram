@@ -1,0 +1,28 @@
+Photon Voice for Fenegram
+=========================
+
+Fenegram uses the browser/HTML5 Photon Voice SDK, not the Windows SDK.
+
+Download while signed in:
+https://www.photonengine.com/sdks
+
+Choose:
+Voice -> HTML5/WebGL -> JavaScript
+
+From the downloaded archive, copy these files into this lib folder:
+
+Required:
+- photon-voice.js
+- photon-voice.wasm
+
+Also accepted by Fenegram if you prefer the minified or JS-only build:
+- photon-voice.min.js
+- photon-voice-js.js
+- photon-voice-js.min.js
+
+The Photon Voice App ID is already built into Fenegram:
+a69440b3-4601-481b-82e3-9aebedaedde4
+
+Free-plan idea:
+This is meant for a tiny private friend group. If Photon shows a free/dev/20 CCU
+Voice app, that should be enough for about 6 simultaneous users.

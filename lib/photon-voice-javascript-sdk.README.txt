@@ -1,0 +1,16 @@
+Photon Voice JavaScript SDK is required for Photon Voice calls.
+
+Download from Photon while signed in:
+https://www.photonengine.com/sdks
+
+Choose:
+Voice -> JavaScript -> JavaScript version 4.4
+
+From the downloaded archive, copy:
+lib/Photon-Javascript_SDK.js
+
+Into this folder as:
+photon-voice-javascript-sdk.js
+
+Fenegram already has the Photon Voice App ID:
+a69440b3-4601-481b-82e3-9aebedaedde4

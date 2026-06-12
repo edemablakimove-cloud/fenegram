@@ -52,7 +52,7 @@
           <div>
             <h1>Fenegram</h1>
             <p>личные сообщения и группы</p>
-            <p class="photon-credit">(текст: Supabase, звонки: LiveKit)</p>
+            <p class="photon-credit">(текст: Supabase, звонки: Photon Voice)</p>
           </div>
         </div>
 
@@ -238,13 +238,14 @@
                 </select>
               </label>
               <label>
-                Photon App ID
+                Photon Realtime App ID
                 <input id="appIdInput" autocomplete="off" placeholder="вставь App ID из Photon Dashboard" disabled />
               </label>
               <label class="check-label">
                 <input id="unlockAppIdInput" type="checkbox" disabled />
-                Единый Photon App ID вшит в Fenegram
+                Realtime App ID вшит в Fenegram
               </label>
+              <p class="device-test-status">Photon Voice App ID для звонков тоже вшит в Fenegram.</p>
               <button id="saveSettingsBtn" class="primary">Сохранить настройки</button>
               <button id="connectionCheckBtn">Проверить соединение</button>
               <p id="connectionCheckStatus" class="device-test-status">Проверка соединения не запущена</p>
@@ -256,7 +257,7 @@
                 Сервис проверки
                 <select id="voiceDiagnosticService">
                   <option value="livekit">LiveKit - реальный возврат звука</option>
-                  <option value="photon">Photon - только проверка подключения</option>
+                  <option value="photon">Photon Voice - возврат через голосовой сервер</option>
                   <option value="jitsi">Jitsi - недоступно для возврата</option>
                 </select>
               </label>

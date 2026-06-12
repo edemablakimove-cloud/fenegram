@@ -4,12 +4,13 @@ const EVENT_DELETE_MESSAGE = 2;
 const EVENT_DIRECT_MESSAGE = 3;
 const EVENT_PROFILE = 4;
 const EVENT_VOICE_SIGNAL = 5;
-const APP_VERSION = "0.2.7";
+const APP_VERSION = "0.2.9";
 const DEFAULT_APP_ID = "b6089b21-fad4-43a9-93e0-7b12f683313e";
+const PHOTON_VOICE_APP_ID = "a69440b3-4601-481b-82e3-9aebedaedde4";
 const DEFAULT_SUPABASE_URL = "https://zcwnkqzojeglvnlejctb.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpjd25rcXpvamVnbHZubGVqY3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTQ2OTEsImV4cCI6MjA5NjE3MDY5MX0.3poXWhnj62tnm0WLvE76jOdTBWJwnmRVULtBR6O1oVk";
 const LIVEKIT_SANDBOX_ID = "fenegram-2i209g";
-const VOICE_ENGINE = "livekit";
+const VOICE_ENGINE = "photonVoice";
 const JITSI_DOMAIN = "meet.jit.si";
 const RTC_CONFIG = {
   iceServers: [
@@ -32,6 +33,12 @@ const state = {
   jitsiContainer: null,
   photonVoiceClient: null,
   photonVoicePeers: new Map(),
+  photonVoiceSdkClient: null,
+  photonVoiceSdkTransport: null,
+  photonVoiceSdkSource: null,
+  photonVoiceSdkLocalVoice: null,
+  photonVoiceSdkRemotePlayers: new Map(),
+  photonVoiceSdkServiceTimer: null,
   photonVoiceJoined: false,
   localVoiceIdentity: "",
   voiceEnabled: false,
@@ -2235,7 +2242,8 @@ async function toggleVoice() {
 
 async function startVoice() {
   if (VOICE_ENGINE === "jitsi") return startJitsiVoice();
-  if (VOICE_ENGINE === "photon") return startPhotonVoice();
+  if (VOICE_ENGINE === "photonVoice") return startPhotonVoiceSdk();
+  if (VOICE_ENGINE === "photonWebRtc") return startPhotonVoice();
   return startLiveKitVoice();
 }
 
@@ -2458,6 +2466,192 @@ function currentVoiceRoom() {
   return { name: ROOM_NAME, label: "main channel" };
 }
 
+async function startPhotonVoiceSdk() {
+  await ensurePhotonVoiceApi();
+  const Photon = window.Photon;
+  const voiceRoom = currentVoiceRoom();
+  state.voiceRoomName = voiceRoom.name;
+  state.voiceRoomLabel = `${voiceRoom.label} (Photon Voice)`;
+  addSystem("Подключение к голосу через Photon Voice...");
+
+  await connectPhotonVoiceSdk(voiceRoom.name);
+  state.voiceEnabled = true;
+  state.voiceConnecting = false;
+  state.micMuted = false;
+  state.deafened = false;
+  updateVoiceControls();
+  await refreshDevices();
+  renderMembers();
+  addSystem("Голос включен через Photon Voice.");
+
+  if (Photon?.Voice && !state.photonVoiceSdkLocalVoice?.setTransmitEnabled) {
+    addSystem("Photon Voice запущен. Если кнопка микрофона не будет мутить звук, обновим управление после проверки SDK.");
+  }
+}
+
+function ensurePhotonVoiceApi() {
+  if (window.Photon?.Voice?.createVoiceClient) return Promise.resolve();
+  const existing = document.querySelector('script[data-fenegram-photon-voice="true"]');
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error(photonVoiceSdkMissingMessage())), { once: true });
+    }).then(assertPhotonVoiceApi);
+  }
+
+  return loadPhotonVoiceScriptCandidate(0).then(assertPhotonVoiceApi);
+}
+
+function loadPhotonVoiceScriptCandidate(index) {
+  const candidates = [
+    "lib/photon-voice.js",
+    "lib/photon-voice.min.js",
+    "lib/photon-voice-js.js",
+    "lib/photon-voice-js.min.js",
+    "lib/photon-voice-javascript-sdk.js",
+  ];
+  const src = candidates[index];
+  if (!src) return Promise.reject(new Error(photonVoiceSdkMissingMessage()));
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.fenegramPhotonVoice = "true";
+    script.onload = resolve;
+    script.onerror = () => {
+      script.remove();
+      loadPhotonVoiceScriptCandidate(index + 1).then(resolve, reject);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+function assertPhotonVoiceApi() {
+  if (!window.Photon?.Voice?.createVoiceClient) {
+    throw new Error(photonVoiceSdkMissingMessage());
+  }
+}
+
+function photonVoiceSdkMissingMessage() {
+  return "не найден Photon Voice JavaScript SDK. Скачай Photon Voice JavaScript SDK 4.4 и положи photon-voice.js + photon-voice.wasm в папку lib.";
+}
+
+function connectPhotonVoiceSdk(roomName) {
+  return new Promise((resolve, reject) => {
+    const Photon = window.Photon;
+    const LBC = Photon.LoadBalancing.LoadBalancingClient;
+    const client = new LBC(Photon.ConnectionProtocol.Wss, PHOTON_VOICE_APP_ID, APP_VERSION);
+    const photonRoom = photonVoiceRoomName(roomName);
+    const transport = Photon.Voice.createTransport(client);
+    const voiceClient = Photon.Voice.createVoiceClient(transport);
+    const timer = window.setTimeout(() => {
+      reject(new Error("Photon Voice timeout"));
+      cleanupPhotonVoiceSdkTransport();
+    }, 25000);
+
+    state.photonVoiceClient = client;
+    state.photonVoiceSdkClient = voiceClient;
+    state.photonVoiceSdkTransport = transport;
+    client.myActor().setName(fenegramDisplayName());
+    bindPhotonVoiceSdkRemoteVoices(Photon, voiceClient);
+    startPhotonVoiceSdkServiceLoop(voiceClient);
+
+    client.onStateChange = function (clientState) {
+      if (clientState === LBC.State.JoinedLobby) {
+        this.joinRoom(photonRoom, { createIfNotExists: true }, { maxPlayers: 16, isVisible: true, isOpen: true });
+      }
+      if (clientState === LBC.State.Joined) {
+        window.clearTimeout(timer);
+        try {
+          publishPhotonVoiceSdkMicrophone(Photon, voiceClient);
+          state.photonVoiceJoined = true;
+          state.localVoiceIdentity = photonVoiceIdentity(myPhotonVoiceActorNr());
+          state.voiceParticipants.set(state.localVoiceIdentity, fenegramDisplayName());
+          syncPhotonVoiceActors();
+          resolve();
+        } catch (error) {
+          reject(error);
+          cleanupPhotonVoiceSdkTransport();
+        }
+      }
+      if (clientState === LBC.State.Disconnected) {
+        window.clearTimeout(timer);
+        if (state.voiceEnabled && VOICE_ENGINE === "photonVoice") addSystem("Голос Photon Voice отключен.");
+        cleanupVoice();
+      }
+    };
+
+    client.onError = function (code, message) {
+      window.clearTimeout(timer);
+      reject(new Error(`${code} ${message || ""}`.trim()));
+      cleanupPhotonVoiceSdkTransport();
+    };
+
+    client.onActorJoin = function (actor) {
+      rememberPhotonVoiceActor(actor);
+      renderMembers();
+    };
+
+    client.onActorLeave = function (actor) {
+      state.voiceParticipants.delete(photonVoiceIdentity(actor.actorNr));
+      renderMembers();
+    };
+
+    client.connectToRegionMaster(el.region.value);
+  });
+}
+
+function bindPhotonVoiceSdkRemoteVoices(Photon, voiceClient) {
+  voiceClient.setOnRemoteVoiceInfoAction((playerId, voiceId, voiceInfo) => {
+    if (playerId === myPhotonVoiceActorNr()) return null;
+    const createPlayer = Photon.Voice.createAudioPLayer || Photon.Voice.createAudioPlayer;
+    const player = createPlayer.call(Photon.Voice, voiceInfo, 200);
+    const decoder = Photon.Voice.createAudioDecoder((frame) => player.input(frame));
+    const key = `${playerId}-${voiceId}`;
+    state.photonVoiceSdkRemotePlayers.set(key, { player, decoder });
+    state.voiceParticipants.set(photonVoiceIdentity(playerId), state.voiceParticipants.get(photonVoiceIdentity(playerId)) || `User ${playerId}`);
+    renderMembers();
+    return Photon.Voice.createRemoteVoiceOptions(decoder, () => {
+      try {
+        player.stop?.();
+      } catch {}
+      Photon.Voice.dispose?.(decoder);
+      Photon.Voice.dispose?.(player);
+      state.photonVoiceSdkRemotePlayers.delete(key);
+      renderMembers();
+    });
+  });
+}
+
+function publishPhotonVoiceSdkMicrophone(Photon, voiceClient) {
+  const voiceInfo = Photon.Voice.createOpusVoiceInfo(48000, 1, 20000, 30000);
+  const source = Photon.Voice.createMicrophone(el.mic.value || "", voiceInfo);
+  const localVoice = voiceClient.createLocalVoiceAudioFromSource(voiceInfo, source);
+  state.photonVoiceSdkSource = source;
+  state.photonVoiceSdkLocalVoice = localVoice;
+  state.localPublication = {
+    async mute() {
+      state.photonVoiceSdkLocalVoice?.setTransmitEnabled?.(false);
+    },
+    async unmute() {
+      state.photonVoiceSdkLocalVoice?.setTransmitEnabled?.(true);
+    },
+  };
+}
+
+function startPhotonVoiceSdkServiceLoop(voiceClient) {
+  window.clearInterval(state.photonVoiceSdkServiceTimer);
+  state.photonVoiceSdkServiceTimer = window.setInterval(() => {
+    try {
+      voiceClient?.service?.();
+      for (const remote of state.photonVoiceSdkRemotePlayers.values()) remote.player?.service?.();
+    } catch (error) {
+      console.warn("Photon Voice service failed", error);
+    }
+  }, 40);
+}
+
 async function startPhotonVoice() {
   if (!window.Photon) {
     throw new Error("библиотека Photon не загрузилась");
@@ -2533,7 +2727,7 @@ function connectPhotonVoice(roomName) {
       }
       if (clientState === LBC.State.Disconnected) {
         window.clearTimeout(timer);
-        if (state.voiceEnabled && VOICE_ENGINE === "photon") addSystem("Голос Photon отключен.");
+        if (state.voiceEnabled && VOICE_ENGINE === "photonWebRtc") addSystem("Голос Photon WebRTC отключен.");
         cleanupVoice();
       }
     };
@@ -2720,6 +2914,31 @@ function cleanupPhotonVoiceTransport() {
   }
 }
 
+function cleanupPhotonVoiceSdkTransport() {
+  window.clearInterval(state.photonVoiceSdkServiceTimer);
+  state.photonVoiceSdkServiceTimer = null;
+  const Photon = window.Photon;
+  for (const remote of state.photonVoiceSdkRemotePlayers.values()) {
+    try {
+      remote.player?.stop?.();
+    } catch {}
+    try {
+      Photon?.Voice?.dispose?.(remote.decoder);
+      Photon?.Voice?.dispose?.(remote.player);
+    } catch {}
+  }
+  state.photonVoiceSdkRemotePlayers.clear();
+  for (const item of [state.photonVoiceSdkLocalVoice, state.photonVoiceSdkSource, state.photonVoiceSdkClient, state.photonVoiceSdkTransport]) {
+    try {
+      Photon?.Voice?.dispose?.(item);
+    } catch {}
+  }
+  state.photonVoiceSdkClient = null;
+  state.photonVoiceSdkTransport = null;
+  state.photonVoiceSdkSource = null;
+  state.photonVoiceSdkLocalVoice = null;
+}
+
 function bindLiveKitEvents(room) {
   const events = window.LivekitClient.RoomEvent;
 
@@ -2841,6 +3060,7 @@ function stopVoice() {
       state.photonVoiceClient.disconnect();
     } catch {}
   }
+  cleanupPhotonVoiceSdkTransport();
   cleanupVoice();
 }
 
@@ -2856,6 +3076,7 @@ function cleanupVoice() {
   state.speakingNames.clear();
   state.jitsiApi = null;
   removeJitsiContainer();
+  cleanupPhotonVoiceSdkTransport();
   cleanupPhotonVoiceTransport();
   for (const audio of state.audioElements.values()) audio.remove();
   state.audioElements.clear();
@@ -2991,8 +3212,9 @@ function updateVoiceControls() {
   el.voice.disabled = locked || state.voiceConnecting;
   el.mute.disabled = locked || state.voiceConnecting || !state.voiceEnabled || state.deafened;
   el.deafen.disabled = locked || state.voiceConnecting || !state.voiceEnabled;
-  el.camera.disabled = locked || state.voiceConnecting || !state.voiceEnabled || VOICE_ENGINE === "photon";
-  el.screenShare.disabled = locked || state.voiceConnecting || !state.voiceEnabled || VOICE_ENGINE === "photon";
+  const photonAudioOnly = VOICE_ENGINE === "photonVoice" || VOICE_ENGINE === "photonWebRtc";
+  el.camera.disabled = locked || state.voiceConnecting || !state.voiceEnabled || photonAudioOnly;
+  el.screenShare.disabled = locked || state.voiceConnecting || !state.voiceEnabled || photonAudioOnly;
   el.voice.textContent = state.voiceConnecting ? "Подключение..." : state.voiceEnabled ? "Выйти из голоса" : "Войти в голос";
   el.mute.textContent = state.micMuted ? "Включить микрофон" : "Выключить микрофон";
   el.deafen.textContent = state.deafened ? "Включить звук и микрофон" : "Выключить звук и микрофон";
@@ -3049,7 +3271,7 @@ function friendlyLiveKitError(error) {
 
 function friendlyVoiceError(error) {
   if (VOICE_ENGINE === "jitsi") return friendlyJitsiError(error);
-  if (VOICE_ENGINE === "photon") return friendlyPhotonVoiceError(error);
+  if (VOICE_ENGINE === "photonVoice" || VOICE_ENGINE === "photonWebRtc") return friendlyPhotonVoiceError(error);
   return friendlyLiveKitError(error);
 }
 
@@ -3073,7 +3295,8 @@ function friendlyPhotonVoiceError(error) {
 
 function voiceEngineLabel() {
   if (VOICE_ENGINE === "jitsi") return "Jitsi";
-  return VOICE_ENGINE === "photon" ? "Photon" : "LiveKit";
+  if (VOICE_ENGINE === "photonVoice") return "Photon Voice";
+  return VOICE_ENGINE === "photonWebRtc" ? "Photon WebRTC" : "LiveKit";
 }
 
 async function toggleCamera() {
@@ -3084,8 +3307,8 @@ async function toggleCamera() {
     renderMembers();
     return;
   }
-  if (VOICE_ENGINE === "photon") {
-    addSystem("Камера в Photon-тесте пока выключена. Сейчас проверяем именно звук.");
+  if (VOICE_ENGINE === "photonVoice" || VOICE_ENGINE === "photonWebRtc") {
+    addSystem("Камера в Photon Voice пока выключена. Сейчас проверяем именно звук.");
     return;
   }
   const room = state.livekitRoom;
@@ -3113,8 +3336,8 @@ async function toggleScreenShare() {
     renderMembers();
     return;
   }
-  if (VOICE_ENGINE === "photon") {
-    addSystem("Демонстрация экрана в Photon-тесте пока выключена. Сейчас проверяем именно звук.");
+  if (VOICE_ENGINE === "photonVoice" || VOICE_ENGINE === "photonWebRtc") {
+    addSystem("Демонстрация экрана в Photon Voice пока выключена. Сейчас проверяем именно звук.");
     return;
   }
   const room = state.livekitRoom;
@@ -3410,8 +3633,7 @@ async function startVoiceLoopbackDiagnostic() {
   if (state.voiceDiagnostic) return;
   const service = el.voiceDiagnosticService.value;
   if (service === "photon") {
-    el.voiceLoopbackStatus.textContent = "Photon проверяет текстовый WebSocket и сигналинг, но не является голосовым сервером. Возврат звука через сервер для него невозможен.";
-    showToast("Photon не поддерживает серверный возврат звука");
+    await startPhotonVoiceLoopbackDiagnostic();
     return;
   }
   if (service === "jitsi") {
@@ -3420,6 +3642,121 @@ async function startVoiceLoopbackDiagnostic() {
     return;
   }
   await startLiveKitLoopbackDiagnostic();
+}
+
+async function startPhotonVoiceLoopbackDiagnostic() {
+  if (state.voiceEnabled) {
+    el.voiceLoopbackStatus.textContent = "Сначала выйди из обычного звонка, потом запускай диагностику.";
+    showToast("Выйди из звонка перед тестом");
+    return;
+  }
+  setVoiceLoopbackRunning(true, "Photon Voice: загружаю SDK...");
+  try {
+    await ensurePhotonVoiceApi();
+  } catch (error) {
+    cleanupVoiceLoopbackDiagnostic();
+    el.voiceLoopbackStatus.textContent = `Photon Voice loopback не прошел: ${friendlyPhotonVoiceError(error)}`;
+    showToast("Нужен Photon Voice SDK");
+    return;
+  }
+
+  const Photon = window.Photon;
+  const LBC = Photon.LoadBalancing.LoadBalancingClient;
+  const client = new LBC(Photon.ConnectionProtocol.Wss, PHOTON_VOICE_APP_ID, `${APP_VERSION}-diag`);
+  const transport = Photon.Voice.createTransport(client);
+  const voiceClient = Photon.Voice.createVoiceClient(transport);
+  const remotePlayers = new Map();
+  const roomName = photonVoiceRoomName(`diag-${crypto.randomUUID().slice(0, 10)}`);
+  const timer = window.setTimeout(() => {
+    if (!state.voiceDiagnostic?.echoReceived) {
+      el.voiceLoopbackStatus.textContent = "Photon Voice: микрофон отправлен, но возврат не пришел. Проверь регион, VPN или доступность Photon Voice.";
+      showToast("Photon Voice звук не вернулся");
+    }
+  }, 10000);
+
+  state.voiceDiagnostic = {
+    type: "photonVoice",
+    client,
+    voiceClient,
+    transport,
+    source: null,
+    localVoice: null,
+    remotePlayers,
+    serviceTimer: null,
+    echoReceived: false,
+  };
+  state.voiceDiagnosticTimer = timer;
+
+  const createPlayer = Photon.Voice.createAudioPLayer || Photon.Voice.createAudioPlayer;
+  voiceClient.setOnRemoteVoiceInfoAction((playerId, voiceId, voiceInfo) => {
+    const player = createPlayer.call(Photon.Voice, voiceInfo, 200);
+    const decoder = Photon.Voice.createAudioDecoder((frame) => {
+      player.input(frame);
+      if (state.voiceDiagnostic && !state.voiceDiagnostic.echoReceived) {
+        state.voiceDiagnostic.echoReceived = true;
+        window.clearTimeout(state.voiceDiagnosticTimer);
+        el.voiceLoopbackStatus.textContent = "Photon Voice: звук вернулся с сервера. Если слышишь себя, этот маршрут работает.";
+        showToast("Photon Voice loopback работает");
+      }
+    });
+    const key = `${playerId}-${voiceId}`;
+    remotePlayers.set(key, { player, decoder });
+    return Photon.Voice.createRemoteVoiceOptions(decoder, () => {
+      try {
+        player.stop?.();
+      } catch {}
+      Photon.Voice.dispose?.(decoder);
+      Photon.Voice.dispose?.(player);
+      remotePlayers.delete(key);
+    });
+  });
+
+  state.voiceDiagnostic.serviceTimer = window.setInterval(() => {
+    try {
+      voiceClient.service?.();
+      for (const remote of remotePlayers.values()) remote.player?.service?.();
+    } catch (error) {
+      console.warn("Photon Voice diagnostic service failed", error);
+    }
+  }, 40);
+
+  client.onStateChange = function (clientState) {
+    if (clientState === LBC.State.JoinedLobby) {
+      this.joinRoom(roomName, { createIfNotExists: true }, { maxPlayers: 2, isVisible: false, isOpen: true });
+    }
+    if (clientState === LBC.State.Joined) {
+      try {
+        const voiceInfo = Photon.Voice.createOpusVoiceInfo(48000, 1, 20000, 30000);
+        const source = Photon.Voice.createMicrophone(el.mic.value || "", voiceInfo);
+        const localVoice = voiceClient.createLocalVoiceAudioFromSource(voiceInfo, source);
+        localVoice.setDebugEchoMode?.(true);
+        if (state.voiceDiagnostic) {
+          state.voiceDiagnostic.source = source;
+          state.voiceDiagnostic.localVoice = localVoice;
+        }
+        el.voiceLoopbackStatus.textContent = "Photon Voice: микрофон отправлен на сервер. Говори, сейчас должен появиться возврат.";
+      } catch (error) {
+        cleanupVoiceLoopbackDiagnostic();
+        el.voiceLoopbackStatus.textContent = `Photon Voice loopback не прошел: ${friendlyPhotonVoiceError(error)}`;
+        showToast("Photon Voice loopback не прошел");
+      }
+    }
+  };
+
+  client.onError = function (code, message) {
+    cleanupVoiceLoopbackDiagnostic();
+    el.voiceLoopbackStatus.textContent = `Photon Voice loopback не прошел: ${friendlyPhotonVoiceError(new Error(`${code} ${message || ""}`.trim()))}`;
+    showToast("Photon Voice loopback не прошел");
+  };
+
+  try {
+    el.voiceLoopbackStatus.textContent = "Photon Voice: подключение к NameServer...";
+    client.connectToRegionMaster(el.region.value);
+  } catch (error) {
+    cleanupVoiceLoopbackDiagnostic();
+    el.voiceLoopbackStatus.textContent = `Photon Voice loopback не прошел: ${friendlyPhotonVoiceError(error)}`;
+    showToast("Photon Voice loopback не прошел");
+  }
 }
 
 async function startLiveKitLoopbackDiagnostic() {
@@ -3533,6 +3870,25 @@ function cleanupVoiceLoopbackDiagnostic() {
   } catch {}
   try {
     diagnostic?.receiverRoom?.disconnect?.();
+  } catch {}
+  try {
+    window.clearInterval(diagnostic?.serviceTimer);
+  } catch {}
+  try {
+    for (const remote of diagnostic?.remotePlayers?.values?.() || []) {
+      remote.player?.stop?.();
+      window.Photon?.Voice?.dispose?.(remote.decoder);
+      window.Photon?.Voice?.dispose?.(remote.player);
+    }
+  } catch {}
+  try {
+    window.Photon?.Voice?.dispose?.(diagnostic?.localVoice);
+    window.Photon?.Voice?.dispose?.(diagnostic?.source);
+    window.Photon?.Voice?.dispose?.(diagnostic?.voiceClient);
+    window.Photon?.Voice?.dispose?.(diagnostic?.transport);
+  } catch {}
+  try {
+    diagnostic?.client?.disconnect?.();
   } catch {}
   if (diagnostic?.audio) {
     diagnostic.audio.pause();
